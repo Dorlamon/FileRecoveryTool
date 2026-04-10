@@ -1,8 +1,9 @@
-# Office Recovery Toolkit v5.1
+# Office Recovery Toolkit v5.2 (LightBar Menu)
 
 (en-US)  
 This version includes:  
-  
+
+Change Menu to LightBar Menu  
 Scans docx/xlsx/pptx/doc/xls files  
 zh-TW locale displays Traditional Chinese UI; other locales display English UI (manual switch supported)  
 Uses SHA256 hash for duplicate file detection  
@@ -22,6 +23,7 @@ HTML highlights Primary file ⭐ Primary
 (zh-TW)  
 這版包含：  
   
+選單改成光棒版本    
 掃描 docx/xlsx/pptx/doc/xls  
 zh-TW 語系顯示繁體中文介面，其它語系顯示英文介面 (可手動切換)  
 使用 SHA256 雜湊值去重複檔案  
