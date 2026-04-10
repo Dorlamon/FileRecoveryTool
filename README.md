@@ -1,4 +1,25 @@
 # Office Recovery Toolkit v5.1
+
+(en-US)  
+This version includes:  
+  
+Scans docx/xlsx/pptx/doc/xls files  
+zh-TW locale displays Traditional Chinese UI; other locales display English UI (manual switch supported)  
+Uses SHA256 hash for duplicate file detection  
+File content fingerprint comparison  
+Parses all worksheets in Excel files  
+Intelligent naming for Excel files  
+Role classification: Primary / Duplicate / Unique / Corrupted files  
+Simulate file renaming / Actual file renaming  
+HTML report  
+Open the latest HTML report (using the system’s default browser)  
+Safe organization mode: Copy / Move (file handling modes)  
+Primary Only toggle  
+Organize files by extension  
+Quality Score evaluation  
+HTML highlights Primary file ⭐ Primary  
+  
+(zh-TW)  
 這版包含：  
   
 掃描 docx/xlsx/pptx/doc/xls  
@@ -16,3 +37,4 @@ Primary Only 開關
 依副檔名分類整理檔案  
 Quality Score 品質分數  
 HTML 顯示主檔 ⭐ Primary  
+
