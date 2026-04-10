@@ -22,6 +22,12 @@ $script:LastOrganizerLog = ''
 $script:OrganizeMode = 'Copy'   # Copy / Move
 $script:OrganizePrimaryOnly = $true
 $script:SelectedMenu = 0
+$script:UiCache = @{
+    WindowWidth = 0
+    WindowHeight = 0
+    SettingsLines = @()
+    StatusLines = @()
+}
 
 # -----------------------------
 # Text Helper
@@ -323,22 +329,52 @@ function Update-LightBarSelection {
 }
 
 function Draw-SettingsPanel {
+    param([switch]$Force)
+
     $layout = Get-MenuLayout
     $rightLeft = $layout.RightLeft
     $rightWidth = $layout.RightWidth
 
-    Write-At $rightLeft 5 (T '目前設定' 'Current Settings') Yellow Black -FixedWidth $rightWidth
-    Write-At $rightLeft 7 ((T '掃描路徑' 'Scan Root') + ' :') Gray Black -FixedWidth $rightWidth
-    Write-At $rightLeft 8 $script:ScanRoot Cyan Black -FixedWidth $rightWidth -Ellipsis
-    Write-At $rightLeft 10 ((T '輸出資料夾' 'Output Folder') + ' :') Gray Black -FixedWidth $rightWidth
-    Write-At $rightLeft 11 $script:OutputRoot Cyan Black -FixedWidth $rightWidth -Ellipsis
-    Write-At $rightLeft 13 ((T '最新 HTML' 'Latest HTML') + ' :') Gray Black -FixedWidth $rightWidth
-    Write-At $rightLeft 14 $script:LastHtmlReport DarkCyan Black -FixedWidth $rightWidth -Ellipsis
-    Write-At $rightLeft 16 ((T '最新整理紀錄' 'Latest Organize Log') + ' :') Gray Black -FixedWidth $rightWidth
-    Write-At $rightLeft 17 $script:LastOrganizerLog DarkCyan Black -FixedWidth $rightWidth -Ellipsis
+    $newLines = @(
+        (T '目前設定' 'Current Settings'),
+        '',
+        ((T '掃描路徑' 'Scan Root') + ' :'),
+        $script:ScanRoot,
+        '',
+        ((T '輸出資料夾' 'Output Folder') + ' :'),
+        $script:OutputRoot,
+        '',
+        ((T '最新 HTML' 'Latest HTML') + ' :'),
+        $script:LastHtmlReport,
+        '',
+        ((T '最新整理紀錄' 'Latest Organize Log') + ' :'),
+        $script:LastOrganizerLog
+    )
+
+    $oldLines = @($script:UiCache.SettingsLines)
+    $max = [Math]::Max($oldLines.Count, $newLines.Count)
+
+    for ($i = 0; $i -lt $max; $i++) {
+        $newLine = if ($i -lt $newLines.Count) { [string]$newLines[$i] } else { '' }
+        $oldLine = if ($i -lt $oldLines.Count) { [string]$oldLines[$i] } else { '' }
+
+        if ($Force -or $newLine -ne $oldLine) {
+            $row = 5 + $i
+            $fg = [ConsoleColor]::Gray
+            if ($i -eq 0) { $fg = [ConsoleColor]::Yellow }
+            elseif ($i -in 3,6,9,12) { $fg = [ConsoleColor]::Cyan }
+            elseif ($i -in 1,4,7,10) { $fg = [ConsoleColor]::Black }
+
+            Write-At $rightLeft $row $newLine $fg Black -FixedWidth $rightWidth -Ellipsis
+        }
+    }
+
+    $script:UiCache.SettingsLines = $newLines
 }
 
 function Draw-LightBarMenu {
+    param([switch]$Force)
+
     $menu = Get-MenuItems
     $layout = Get-MenuLayout
 
@@ -348,46 +384,59 @@ function Draw-LightBarMenu {
         Draw-OneMenuItem -Index $i -Selected:($i -eq $script:SelectedMenu)
     }
 
-    Draw-SettingsPanel
+    Draw-SettingsPanel -Force:$Force
 }
 
 function Draw-StatusBar {
+    param([switch]$Force)
+
     $w = [Console]::WindowWidth
     $h = [Console]::WindowHeight
     $top = $h - 4
     $resultCount = Get-ResultCount
 
-    Write-At 0 $top     (' '.PadRight($w - 1)) Black DarkCyan -NoPad
-    Write-At 0 ($top+1) (' '.PadRight($w - 1)) Black DarkCyan -NoPad
-    Write-At 0 ($top+2) (' '.PadRight($w - 1)) Black DarkCyan -NoPad
-    Write-At 0 ($top+3) (' '.PadRight($w - 1)) Black DarkCyan -NoPad
+    $newLines = @(
+        ('{0}: {1} | {2}: {3} | {4}: {5}' -f (T '模式' 'Mode'), $script:OrganizeMode, (T '只整理主檔' 'Primary Only'), $script:OrganizePrimaryOnly, (T '語系' 'Language'), $script:Lang),
+        ('{0}: {1} | {2}: {3}' -f (T '結果筆數' 'Result Count'), $resultCount, (T '最新狀態' 'Last Status'), (Get-ShortDisplayText $script:LastStatus 45)),
+        ('{0}: {1}' -f (T '摘要' 'Summary'), (Get-ShortDisplayText $script:LastSummary 100)),
+        (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / L language / Esc exit')
+    )
 
-    $line1 = '{0}: {1} | {2}: {3} | {4}: {5}' -f `
-        (T '模式' 'Mode'), $script:OrganizeMode, `
-        (T '只整理主檔' 'Primary Only'), $script:OrganizePrimaryOnly, `
-        (T '語系' 'Language'), $script:Lang
+    $oldLines = @($script:UiCache.StatusLines)
 
-    $line2 = '{0}: {1} | {2}: {3}' -f `
-        (T '結果筆數' 'Result Count'), $resultCount, `
-        (T '最新狀態' 'Last Status'), (Get-ShortDisplayText $script:LastStatus 45)
+    for ($i = 0; $i -lt 4; $i++) {
+        $line = if ($i -lt $newLines.Count) { [string]$newLines[$i] } else { '' }
+        $oldLine = if ($i -lt $oldLines.Count) { [string]$oldLines[$i] } else { '' }
 
-    $line3 = '{0}: {1}' -f (T '摘要' 'Summary'), (Get-ShortDisplayText $script:LastSummary 100)
-    $line4 = (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / L language / Esc exit')
+        if ($Force -or $line -ne $oldLine) {
+            Write-At 0 ($top + $i) (' ' * ($w - 1)) Black DarkCyan -NoPad
+            Write-At 1 ($top + $i) $line Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
+        }
+    }
 
-    Write-At 1 $top     $line1 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
-    Write-At 1 ($top+1) $line2 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
-    Write-At 1 ($top+2) $line3 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
-    Write-At 1 ($top+3) $line4 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
+    $script:UiCache.StatusLines = $newLines
 }
 
 # -----------------------------
 # UI
 # -----------------------------
 function Draw-UI {
+    $currentWidth = [Console]::WindowWidth
+    $currentHeight = [Console]::WindowHeight
+    $force = $false
+
+    if ($script:UiCache.WindowWidth -ne $currentWidth -or $script:UiCache.WindowHeight -ne $currentHeight) {
+        $script:UiCache.WindowWidth = $currentWidth
+        $script:UiCache.WindowHeight = $currentHeight
+        $script:UiCache.SettingsLines = @()
+        $script:UiCache.StatusLines = @()
+        $force = $true
+    }
+
     $ok = Draw-Frame
     if (-not $ok) { return }
-    Draw-LightBarMenu
-    Draw-StatusBar
+    Draw-LightBarMenu -Force:$force
+    Draw-StatusBar -Force:$force
 }
 
 function Show-ProgressLine {
@@ -1164,7 +1213,32 @@ function Export-HTML {
 
     try {
         $os = Get-CimInstance Win32_OperatingSystem
-        $osText = '{0} ({1})' -f $os.Caption, $os.Version
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+
+        $displayVersion = ''
+        if ($cv) {
+            if ($cv.DisplayVersion) {
+                $displayVersion = [string]$cv.DisplayVersion
+            }
+            elseif ($cv.ReleaseId) {
+                $displayVersion = [string]$cv.ReleaseId
+            }
+        }
+
+        $buildText = ''
+        if ($os.BuildNumber) {
+            $buildText = [string]$os.BuildNumber
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($displayVersion) -and -not [string]::IsNullOrWhiteSpace($buildText)) {
+            $osText = '{0} ({1}, Build {2}, {3})' -f $os.Caption, $os.Version, $buildText, $displayVersion
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($buildText)) {
+            $osText = '{0} ({1}, Build {2})' -f $os.Caption, $os.Version, $buildText
+        }
+        else {
+            $osText = '{0} ({1})' -f $os.Caption, $os.Version
+        }
     }
     catch {
         $osText = [Environment]::OSVersion.VersionString
@@ -1174,10 +1248,16 @@ function Export-HTML {
     foreach ($r in $script:Results) {
         $roleDisplay = $r.Role
         if ($r.Role -eq 'Primary') {
-            $roleDisplay = '⭐ Primary'
+            $roleDisplay = '⭐ ' + (T '主檔' 'Primary')
         }
         elseif ($r.Role -eq 'Duplicate') {
-            $roleDisplay = 'Duplicate'
+            $roleDisplay = (T '重複檔' 'Duplicate')
+        }
+        elseif ($r.Role -eq 'Unique') {
+            $roleDisplay = (T '唯一檔' 'Unique')
+        }
+        elseif ($r.Role -eq 'Broken') {
+            $roleDisplay = (T '損毀檔' 'Broken')
         }
 
         [void]$detailRows.AppendLine('<tr>')
@@ -1200,6 +1280,61 @@ function Export-HTML {
     $summaryText = Get-SafeHtml (T '摘要' 'Summary')
     $detailText = Get-SafeHtml (T '明細' 'Details')
     $customerSummary = Get-SafeHtml (T '客戶報告摘要' 'Customer Summary')
+    $subTitle = Get-SafeHtml (T '產品級救援分析報表' 'Product-grade recovery analysis report')
+    $searchPlaceholder = Get-SafeHtml (T '搜尋' 'Search')
+    $generatedBy = Get-SafeHtml (T '由 OfficeRecoveryToolkit.ps1 v5 產生' 'Generated by OfficeRecoveryToolkit.ps1 v5')
+
+	function New-CardLabelHtml {
+		param(
+			[string]$Zh,
+			[string]$En
+		)
+		return ('<div class="k-zh">{0}</div><div class="k-en">{1}</div>' -f (Get-SafeHtml $Zh), (Get-SafeHtml $En))
+	}
+
+	function New-ThLabelHtml {
+		param(
+			[string]$Zh,
+			[string]$En
+		)
+		return ('<div class="th-zh">{0}</div><div class="th-en">{1}</div>' -f (Get-SafeHtml $Zh), (Get-SafeHtml $En))
+	}
+
+    $cardTotalFiles   = New-CardLabelHtml -Zh '總檔案數'   -En 'Total Files'
+    $cardDupFileGrp   = New-CardLabelHtml -Zh '相同檔案群組' -En 'Duplicate File Groups'
+    $cardDupContGrp   = New-CardLabelHtml -Zh '相同內容群組' -En 'Duplicate Content Groups'
+    $cardParseFail    = New-CardLabelHtml -Zh '解析失敗'   -En 'Parse Failed'
+    $cardPrimary      = New-CardLabelHtml -Zh '主檔'       -En 'Primary'
+    $cardDuplicate    = New-CardLabelHtml -Zh '重複檔'     -En 'Duplicate'
+    $cardUnique       = New-CardLabelHtml -Zh '唯一檔'     -En 'Unique'
+    $cardNonParsed    = New-CardLabelHtml -Zh '非成功解析' -En 'Non-Parsed'
+	$thFileName      = New-ThLabelHtml -Zh '檔名'       -En 'File Name'
+    $thType          = New-ThLabelHtml -Zh '類型'       -En 'Type'
+    $thSizeKB        = New-ThLabelHtml -Zh '大小(KB)'   -En 'Size (KB)'
+    $thStatus        = New-ThLabelHtml -Zh '狀態'       -En 'Status'
+    $thDupType       = New-ThLabelHtml -Zh '重複判定'   -En 'Duplicate Type'
+    $thRole          = New-ThLabelHtml -Zh '角色'       -En 'Role'
+    $thQuality       = New-ThLabelHtml -Zh '品質分數'   -En 'Quality Score'
+    $thGroup         = New-ThLabelHtml -Zh '群組'       -En 'Group'
+    $thFileHash      = New-ThLabelHtml -Zh '檔案雜湊'   -En 'File Hash'
+    $thContentHash   = New-ThLabelHtml -Zh '內容指紋'   -En 'Content Hash'
+    $thPreview       = New-ThLabelHtml -Zh '內容預覽'   -En 'Preview Text'
+    $thReason        = New-ThLabelHtml -Zh '說明'       -En 'Reason'
+	$thComputerName = New-ThLabelHtml -Zh '電腦名稱' -En 'Computer Name'
+    $thOS           = New-ThLabelHtml -Zh '作業系統' -En 'Operating System'
+    $thUser         = New-ThLabelHtml -Zh '使用者'   -En 'User'
+    $thScanRoot     = New-ThLabelHtml -Zh '掃描路徑' -En 'Scan Root'
+    $thReportTime   = New-ThLabelHtml -Zh '報表時間' -En 'Report Time'
+	$thComputerName = New-ThLabelHtml -Zh '電腦名稱' -En 'Computer Name'
+    $thOS           = New-ThLabelHtml -Zh '作業系統' -En 'Operating System'
+    $thUser         = New-ThLabelHtml -Zh '使用者'   -En 'User'
+    $thScanRoot     = New-ThLabelHtml -Zh '掃描路徑' -En 'Scan Root'
+    $thReportTime   = New-ThLabelHtml -Zh '報表時間' -En 'Report Time'
+	$searchPlaceholder = Get-SafeHtml (T '輸入關鍵字搜尋（檔名 / 群組 / 內容）' 'Search by file / group / content')
+	$searchLabel = Get-SafeHtml (T '搜尋' 'Search')
+	$clearLabel = Get-SafeHtml (T '清除' 'Clear')
+	$searchStatAll = Get-SafeHtml (T '全部筆數' 'Total Rows')
+	$searchStatMatched = Get-SafeHtml (T '符合筆數' 'Matched Rows')
 
     $html = @"
 <!DOCTYPE html>
@@ -1214,67 +1349,171 @@ h1{margin:0 0 10px 0;font-size:30px}
 .sub{color:#64748b;margin-bottom:20px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:20px 0}
 .card{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:18px}
-.card .k{font-size:13px;color:#6b7280}
-.card .v{font-size:28px;font-weight:700;margin-top:8px}
+.card .k-zh{font-size:14px;color:#334155;font-weight:600;line-height:1.25}
+.card .k-en{font-size:11px;color:#64748b;line-height:1.2;margin-top:2px}
+.card .v{
+    font-size:30px;
+    font-weight:700;
+    margin-top:10px;
+    color:#0f172a;
+}
 .panel{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:18px;margin-bottom:20px}
 table{width:100%;border-collapse:collapse}
 th,td{border:1px solid #dbe4f0;padding:8px 10px;vertical-align:top;text-align:left;font-size:13px}
 th{background:#eaf2ff}
-.search{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;margin:10px 0 16px 0;font-size:14px}
+.th-zh{font-size:13px;font-weight:700;line-height:1.2;color:#1e293b}
+.th-en{font-size:10px;font-weight:400;line-height:1.15;color:#64748b;margin-top:2px}
+th{
+    background:#eaf2ff;
+    white-space:normal;
+    width:220px;
+}
+.search-wrap{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    width:100%;
+    max-width:720px;
+    margin:10px auto 16px auto;
+    flex-wrap:wrap;
+}
+
+.search-box{
+    display:flex;
+    align-items:center;
+    flex:1 1 520px;
+    min-width:320px;
+    border:1px solid #cbd5e1;
+    border-radius:10px;
+    background:#fff;
+    overflow:hidden;
+}
+
+.search-icon{
+    padding:0 12px;
+    color:#64748b;
+    font-size:14px;
+    user-select:none;
+}
+
+.search{
+    flex:1 1 auto;
+    min-width:120px;
+    padding:10px 12px 10px 0;
+    border:none;
+    font-size:14px;
+    background:#fff;
+}
+
+.search:focus{
+    outline:none;
+}
+
+.search-box:focus-within{
+    border-color:#3b82f6;
+    box-shadow:0 0 0 2px rgba(59,130,246,0.2);
+}
+
+.search-clear{
+    border:1px solid #cbd5e1;
+    background:#fff;
+    color:#334155;
+    border-radius:10px;
+    padding:10px 14px;
+    font-size:13px;
+    cursor:pointer;
+}
+
+.search-clear:hover{
+    background:#f8fafc;
+}
+
+.search-stat{
+    font-size:12px;
+    color:#64748b;
+    margin:0 0 14px 0;
+}
 .footer{margin-top:24px;color:#64748b;font-size:12px}
 .small{font-size:13px;color:#475569}
 </style>
 <script>
+function updateSearchStats(total, matched) {
+  var el = document.getElementById("searchStat");
+  if (!el) return;
+  var totalLabel = el.getAttribute("data-total-label") || "Total Rows";
+  var matchedLabel = el.getAttribute("data-matched-label") || "Matched Rows";
+  el.innerText = matchedLabel + ": " + matched + " / " + totalLabel + ": " + total;
+}
+
 function filterTable() {
   var input = document.getElementById("searchBox");
-  var filter = input.value.toLowerCase();
+  var filter = (input.value || "").toLowerCase();
   var rows = document.querySelectorAll("#detailBody tr");
+  var matched = 0;
+  var total = rows.length;
+
   for (var i = 0; i < rows.length; i++) {
-    var txt = rows[i].innerText.toLowerCase();
-    rows[i].style.display = txt.indexOf(filter) > -1 ? "" : "none";
+    var txt = (rows[i].innerText || "").toLowerCase();
+    var hit = txt.indexOf(filter) > -1;
+    rows[i].style.display = hit ? "" : "none";
+    if (hit) matched++;
   }
+
+  updateSearchStats(total, matched);
 }
+
+function clearSearch() {
+  var input = document.getElementById("searchBox");
+  if (!input) return;
+  input.value = "";
+  filterTable();
+  input.focus();
+}
+
+window.addEventListener("load", function() {
+  filterTable();
+});
 </script>
 </head>
 <body>
 <div class="wrap">
     <h1>$title</h1>
-    <div class="sub">Product-grade recovery analysis report</div>
+    <div class="sub">$subTitle</div>
 
-    <div class="grid">
+	<div class="grid">
         <div class="card">
-            <div class="k">$(Get-SafeHtml (T '總檔案數' 'Total Files'))</div>
+            $cardTotalFiles
             <div class="v">$totalFiles</div>
         </div>
         <div class="card">
-            <div class="k">$(Get-SafeHtml (T '相同檔案群組' 'Duplicate File Groups'))</div>
+            $cardDupFileGrp
             <div class="v">$dupFileGroups</div>
         </div>
         <div class="card">
-            <div class="k">$(Get-SafeHtml (T '相同內容群組' 'Duplicate Content Groups'))</div>
+            $cardDupContGrp
             <div class="v">$dupContGroups</div>
         </div>
         <div class="card">
-            <div class="k">$(Get-SafeHtml (T '解析失敗' 'Parse Failed'))</div>
+            $cardParseFail
             <div class="v">$failCount</div>
         </div>
     </div>
 
     <div class="grid">
         <div class="card">
-            <div class="k">Primary</div>
+            $cardPrimary
             <div class="v">$primary</div>
         </div>
         <div class="card">
-            <div class="k">Duplicate</div>
+            $cardDuplicate
             <div class="v">$dup</div>
         </div>
         <div class="card">
-            <div class="k">Unique</div>
+            $cardUnique
             <div class="v">$unique</div>
         </div>
         <div class="card">
-            <div class="k">$(Get-SafeHtml (T '非成功解析' 'Non-Parsed'))</div>
+            $cardNonParsed
             <div class="v">$fail</div>
         </div>
     </div>
@@ -1284,42 +1523,64 @@ function filterTable() {
         <div class="small">
             $(Get-SafeHtml (T '總檔案' 'Total Files')): $totalFiles<br>
             $(Get-SafeHtml (T '成功解析' 'Parsed Successfully')): $(($totalFiles - $fail))<br>
-            Primary: $primary<br>
-            Duplicate: $dup<br>
-            Unique: $unique<br>
+            $(Get-SafeHtml (T '主檔' 'Primary')): $primary<br>
+            $(Get-SafeHtml (T '重複檔' 'Duplicate')): $dup<br>
+            $(Get-SafeHtml (T '唯一檔' 'Unique')): $unique<br>
             $(Get-SafeHtml (T '無法完整解析' 'Not Fully Parsed')): $fail
         </div>
     </div>
 
-    <div class="panel">
-        <h2>$summaryText</h2>
-        <table>
-            <tr><th>$(Get-SafeHtml (T '電腦名稱' 'Computer Name'))</th><td>$(Get-SafeHtml $env:COMPUTERNAME)</td></tr>
-            <tr><th>$(Get-SafeHtml (T '作業系統' 'Operating System'))</th><td>$(Get-SafeHtml $osText)</td></tr>
-            <tr><th>$(Get-SafeHtml (T '使用者' 'User'))</th><td>$(Get-SafeHtml $env:USERNAME)</td></tr>
-            <tr><th>$(Get-SafeHtml (T '掃描路徑' 'Scan Root'))</th><td>$(Get-SafeHtml $script:ScanRoot)</td></tr>
-            <tr><th>$(Get-SafeHtml (T '報表時間' 'Report Time'))</th><td>$(Get-SafeHtml ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')))</td></tr>
-        </table>
-    </div>
+   <div class="panel">
+		<h2>$summaryText</h2>
+		<table>
+			<tr>
+				<th>$thComputerName</th>
+				<td>$(Get-SafeHtml $env:COMPUTERNAME)</td>
+			</tr>
+			<tr>
+				<th>$thOS</th>
+				<td>$(Get-SafeHtml $osText)</td>
+			</tr>
+			<tr>
+				<th>$thUser</th>
+				<td>$(Get-SafeHtml $env:USERNAME)</td>
+			</tr>
+			<tr>
+				<th>$thScanRoot</th>
+				<td>$(Get-SafeHtml $script:ScanRoot)</td>
+			</tr>
+			<tr>
+				<th>$thReportTime</th>
+				<td>$(Get-SafeHtml ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')))</td>
+			</tr>
+		</table>
+	</div>
 
     <div class="panel">
-        <h2>$detailText</h2>
-        <input type="text" id="searchBox" class="search" onkeyup="filterTable()" placeholder="Search / 搜尋">
-        <table>
-            <thead>
+		<h2>$detailText</h2>
+		<div class="search-wrap">
+			<div class="search-box">
+				<div class="search-icon">🔍</div>
+				<input type="text" id="searchBox" class="search" onkeyup="filterTable()" placeholder="$searchPlaceholder">
+			</div>
+			<button type="button" class="search-clear" onclick="clearSearch()">$clearLabel</button>
+		</div>
+		<div id="searchStat" class="search-stat" data-total-label="$searchStatAll" data-matched-label="$searchStatMatched"></div>
+		<table>
+			<thead>
                 <tr>
-                    <th>$(Get-SafeHtml (T '檔名' 'File Name'))</th>
-                    <th>$(Get-SafeHtml (T '類型' 'Type'))</th>
-                    <th>$(Get-SafeHtml (T '大小(KB)' 'Size(KB)'))</th>
-                    <th>$(Get-SafeHtml (T '狀態' 'Status'))</th>
-                    <th>$(Get-SafeHtml (T '重複判定' 'Duplicate Type'))</th>
-                    <th>$(Get-SafeHtml (T '角色' 'Role'))</th>
-                    <th>$(Get-SafeHtml (T '品質分數' 'Quality Score'))</th>
-                    <th>$(Get-SafeHtml (T '群組' 'Group'))</th>
-                    <th>$(Get-SafeHtml (T '檔案雜湊' 'File Hash'))</th>
-                    <th>$(Get-SafeHtml (T '內容指紋' 'Content Hash'))</th>
-                    <th>$(Get-SafeHtml (T '內容預覽' 'Preview Text'))</th>
-                    <th>$(Get-SafeHtml (T '說明' 'Reason'))</th>
+                    <th>$thFileName</th>
+                    <th>$thType</th>
+                    <th>$thSizeKB</th>
+                    <th>$thStatus</th>
+                    <th>$thDupType</th>
+                    <th>$thRole</th>
+                    <th>$thQuality</th>
+                    <th>$thGroup</th>
+                    <th>$thFileHash</th>
+                    <th>$thContentHash</th>
+                    <th>$thPreview</th>
+                    <th>$thReason</th>
                 </tr>
             </thead>
             <tbody id="detailBody">
@@ -1328,7 +1589,7 @@ function filterTable() {
         </table>
     </div>
 
-    <div class="footer">Generated by OfficeRecoveryToolkit.ps1 v5</div>
+    <div class="footer">$generatedBy</div>
 </div>
 </body>
 </html>
@@ -1726,16 +1987,16 @@ try {
         if (Test-KeyMatch -KeyInfo $key -KeyName 'Enter' -VirtualKeyCode 13) {
             $action = $menuItems[$script:SelectedMenu].Action
         }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D1' -VirtualKeyCode 49 -Chars @('1')) { $script:SelectedMenu = 0; $action = 'Scan' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D2' -VirtualKeyCode 50 -Chars @('2')) { $script:SelectedMenu = 1; $action = 'ExportHtml' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D3' -VirtualKeyCode 51 -Chars @('3')) { $script:SelectedMenu = 2; $action = 'OpenOutput' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D4' -VirtualKeyCode 52 -Chars @('4')) { $script:SelectedMenu = 3; $action = 'SetScanRoot' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D5' -VirtualKeyCode 53 -Chars @('5')) { $script:SelectedMenu = 4; $action = 'PreviewRename' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D6' -VirtualKeyCode 54 -Chars @('6')) { $script:SelectedMenu = 5; $action = 'ApplyRename' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D7' -VirtualKeyCode 55 -Chars @('7')) { $script:SelectedMenu = 6; $action = 'OpenHtml' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D8' -VirtualKeyCode 56 -Chars @('8')) { $script:SelectedMenu = 7; $action = 'Organize' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D9' -VirtualKeyCode 57 -Chars @('9')) { $script:SelectedMenu = 8; $action = 'ToggleMode' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D0' -VirtualKeyCode 48 -Chars @('0')) { $script:SelectedMenu = 9; $action = 'TogglePrimaryOnly' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D1' -VirtualKeyCode 49 -Chars @('1')) { $old = $script:SelectedMenu; $script:SelectedMenu = 0; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'Scan' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D2' -VirtualKeyCode 50 -Chars @('2')) { $old = $script:SelectedMenu; $script:SelectedMenu = 1; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ExportHtml' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D3' -VirtualKeyCode 51 -Chars @('3')) { $old = $script:SelectedMenu; $script:SelectedMenu = 2; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'OpenOutput' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D4' -VirtualKeyCode 52 -Chars @('4')) { $old = $script:SelectedMenu; $script:SelectedMenu = 3; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'SetScanRoot' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D5' -VirtualKeyCode 53 -Chars @('5')) { $old = $script:SelectedMenu; $script:SelectedMenu = 4; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'PreviewRename' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D6' -VirtualKeyCode 54 -Chars @('6')) { $old = $script:SelectedMenu; $script:SelectedMenu = 5; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ApplyRename' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D7' -VirtualKeyCode 55 -Chars @('7')) { $old = $script:SelectedMenu; $script:SelectedMenu = 6; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'OpenHtml' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D8' -VirtualKeyCode 56 -Chars @('8')) { $old = $script:SelectedMenu; $script:SelectedMenu = 7; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'Organize' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D9' -VirtualKeyCode 57 -Chars @('9')) { $old = $script:SelectedMenu; $script:SelectedMenu = 8; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ToggleMode' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D0' -VirtualKeyCode 48 -Chars @('0')) { $old = $script:SelectedMenu; $script:SelectedMenu = 9; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'TogglePrimaryOnly' }
         elseif (Test-KeyMatch -KeyInfo $key -KeyName 'Escape' -VirtualKeyCode 27) { $action = 'Exit' }
 
         switch ($action) {
