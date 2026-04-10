@@ -1,8 +1,10 @@
-# Office Recovery Toolkit v5.2 (LightBar Menu)
+# Office Recovery Toolkit v5.5 (LightBar Menu)
 
 (en-US)  
 This version includes:  
 
+Upgrade report features  
+Refine report styling  
 Change Menu to LightBar Menu  
 Scans docx/xlsx/pptx/doc/xls files  
 zh-TW locale displays Traditional Chinese UI; other locales display English UI (manual switch supported)  
@@ -23,6 +25,8 @@ HTML highlights Primary file ⭐ Primary
 (zh-TW)  
 這版包含：  
   
+強化報表功能  
+美化報表樣式  
 選單改成光棒版本    
 掃描 docx/xlsx/pptx/doc/xls  
 zh-TW 語系顯示繁體中文介面，其它語系顯示英文介面 (可手動切換)  
