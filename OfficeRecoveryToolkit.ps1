@@ -21,6 +21,7 @@ $script:LastOrganizerLog = ''
 # v4.1 / v5 settings
 $script:OrganizeMode = 'Copy'   # Copy / Move
 $script:OrganizePrimaryOnly = $true
+$script:SelectedMenu = 0
 
 # -----------------------------
 # Text Helper
@@ -114,66 +115,279 @@ function Get-FileCategory {
     }
 }
 
+
+# -----------------------------
+# Console / LightBar UI Helpers
+# -----------------------------
+function Get-ShortDisplayText {
+    param(
+        [string]$Text,
+        [int]$MaxLength = 80
+    )
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    if ($Text.Length -le $MaxLength) { return $Text }
+    if ($MaxLength -lt 8) { return $Text.Substring(0, $MaxLength) }
+    return $Text.Substring(0, $MaxLength - 3) + '...'
+}
+
+function Get-DisplayCellWidth {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return 0 }
+    $w = 0
+    foreach ($ch in $Text.ToCharArray()) {
+        if ([int][char]$ch -gt 255) { $w += 2 } else { $w += 1 }
+    }
+    return $w
+}
+
+function Fit-DisplayText {
+    param(
+        [string]$Text,
+        [int]$Width,
+        [switch]$PadRight,
+        [switch]$UseEllipsis
+    )
+    if ($Width -le 0) { return '' }
+    if ($null -eq $Text) { $Text = '' }
+    $s = [string]$Text
+    $result = ''
+    $used = 0
+    $ellipsis = if ($UseEllipsis) { '...' } else { '' }
+    $ellipsisWidth = 3
+    foreach ($ch in $s.ToCharArray()) {
+        $cw = if ([int][char]$ch -gt 255) { 2 } else { 1 }
+        $limit = $Width
+        if ($UseEllipsis) { $limit = $Width - $ellipsisWidth }
+        if ($limit -lt 0) { $limit = 0 }
+        if ($used + $cw -gt $limit -and $UseEllipsis -and ($used + $ellipsisWidth) -le $Width) {
+            break
+        }
+        if ($used + $cw -gt $Width) { break }
+        $result += $ch
+        $used += $cw
+    }
+    if ($UseEllipsis -and (Get-DisplayCellWidth $s) -gt $Width) {
+        if ((Get-DisplayCellWidth $result) + $ellipsisWidth -le $Width) {
+            $result += $ellipsis
+            $used += $ellipsisWidth
+        }
+    }
+    if ($PadRight) {
+        $pad = $Width - $used
+        if ($pad -gt 0) { $result += (' ' * $pad) }
+    }
+    return $result
+}
+
+function Safe-SetCursorPosition {
+    param([int]$Left, [int]$Top)
+    try {
+        if ($Left -lt 0) { $Left = 0 }
+        if ($Top -lt 0) { $Top = 0 }
+        [Console]::SetCursorPosition($Left, $Top)
+    }
+    catch {
+    }
+}
+
+function Write-At {
+    param(
+        [int]$Left,
+        [int]$Top,
+        [string]$Text,
+        [ConsoleColor]$Foreground = [ConsoleColor]::Gray,
+        [ConsoleColor]$Background = [ConsoleColor]::Black,
+        [switch]$NoPad,
+        [int]$FixedWidth = 0,
+        [switch]$Ellipsis
+    )
+
+    try {
+        $width = [Console]::WindowWidth
+        if ($width -lt 20) { return }
+        if ($Left -ge $width) { return }
+
+        Safe-SetCursorPosition -Left $Left -Top $Top
+
+        $available = $width - $Left
+        if ($available -lt 1) { return }
+        if ($FixedWidth -gt 0 -and $FixedWidth -lt $available) {
+            $available = $FixedWidth
+        }
+
+        $out = Fit-DisplayText -Text $Text -Width $available -PadRight:(-not $NoPad) -UseEllipsis:$Ellipsis
+
+        $oldFg = [Console]::ForegroundColor
+        $oldBg = [Console]::BackgroundColor
+        [Console]::ForegroundColor = $Foreground
+        [Console]::BackgroundColor = $Background
+        [Console]::Write($out)
+        [Console]::ForegroundColor = $oldFg
+        [Console]::BackgroundColor = $oldBg
+    }
+    catch {
+    }
+}
+
+function Clear-Line {
+    param([int]$Top)
+    try {
+        $blank = ''.PadRight([Math]::Max([Console]::WindowWidth - 1, 1))
+        Write-At -Left 0 -Top $Top -Text $blank -Foreground DarkGray -Background Black -NoPad
+    }
+    catch {
+    }
+}
+
+function Draw-Frame {
+    $w = [Console]::WindowWidth
+    $h = [Console]::WindowHeight
+
+    if ($w -lt 80 -or $h -lt 26) {
+        Clear-Host
+        Write-Host (T '視窗太小，請放大 PowerShell 視窗後再使用。' 'Console window too small. Please enlarge the PowerShell window.') -ForegroundColor Yellow
+        Write-Host ('Width=' + $w + ' Height=' + $h) -ForegroundColor DarkYellow
+        return $false
+    }
+
+    for ($i = 0; $i -lt $h; $i++) {
+        Clear-Line -Top $i
+    }
+
+    Write-At 0 0  ('=' * ($w - 1)) Cyan Black
+    Write-At 2 1  (T 'Office 檔案救援分析工具 v5 LightBar' 'Office Recovery Analyzer v5 LightBar') White DarkBlue
+    Write-At 2 2  (T '↑↓ 光棒選擇  Enter 執行  數字快速鍵  L 切換語系  Esc 離開' '↑↓ Select  Enter Run  Number hotkeys  L switch language  Esc exit') Gray Black
+    Write-At 0 3  ('=' * ($w - 1)) Cyan Black
+    return $true
+}
+
+function Get-MenuItems {
+    @(
+        @{ Key='1'; Text=(T '開始掃描' 'Start Scan'); Action='Scan' },
+        @{ Key='2'; Text=(T '匯出 HTML 報表' 'Export HTML Report'); Action='ExportHtml' },
+        @{ Key='3'; Text=(T '開啟輸出資料夾' 'Open Output Folder'); Action='OpenOutput' },
+        @{ Key='4'; Text=(T '設定掃描資料夾' 'Set Scan Folder'); Action='SetScanRoot' },
+        @{ Key='5'; Text=(T '模擬自動改檔名' 'Preview Auto Rename'); Action='PreviewRename' },
+        @{ Key='6'; Text=(T '實際自動改檔名' 'Apply Auto Rename'); Action='ApplyRename' },
+        @{ Key='7'; Text=(T '開啟最新 HTML 報表' 'Open Latest HTML Report'); Action='OpenHtml' },
+        @{ Key='8'; Text=(T '整理主檔/重複檔到資料夾' 'Organize Primary/Duplicate Files'); Action='Organize' },
+        @{ Key='9'; Text=(T '切換 Copy/Move 模式' 'Toggle Copy/Move Mode'); Action='ToggleMode' },
+        @{ Key='0'; Text=(T '切換是否只整理主檔' 'Toggle Primary Only Mode'); Action='TogglePrimaryOnly' },
+        @{ Key='L'; Text=(T '切換語系' 'Switch Language'); Action='ToggleLang' },
+        @{ Key='Esc'; Text=(T '離開' 'Exit'); Action='Exit' }
+    )
+}
+
+function Get-MenuLayout {
+    return [PSCustomObject]@{
+        Top        = 6
+        Left       = 4
+        Width      = 42
+        RightLeft  = 52
+        RightWidth = [Math]::Max(([Console]::WindowWidth - 54), 20)
+    }
+}
+
+function Draw-OneMenuItem {
+    param(
+        [int]$Index,
+        [switch]$Selected
+    )
+
+    $menu = Get-MenuItems
+    if ($Index -lt 0 -or $Index -ge $menu.Count) { return }
+
+    $layout = Get-MenuLayout
+    $item = $menu[$Index]
+    $line = ('[{0}] {1}' -f $item.Key, $item.Text)
+    $text = '  ' + $line
+    $top = $layout.Top + $Index
+
+    if ($Selected) {
+        Write-At $layout.Left $top $text Black Gray -FixedWidth $layout.Width -Ellipsis
+    }
+    else {
+        Write-At $layout.Left $top $text Gray Black -FixedWidth $layout.Width -Ellipsis
+    }
+}
+
+function Update-LightBarSelection {
+    param(
+        [int]$OldIndex,
+        [int]$NewIndex
+    )
+
+    if ($OldIndex -eq $NewIndex) { return }
+    Draw-OneMenuItem -Index $OldIndex
+    Draw-OneMenuItem -Index $NewIndex -Selected
+}
+
+function Draw-SettingsPanel {
+    $layout = Get-MenuLayout
+    $rightLeft = $layout.RightLeft
+    $rightWidth = $layout.RightWidth
+
+    Write-At $rightLeft 5 (T '目前設定' 'Current Settings') Yellow Black -FixedWidth $rightWidth
+    Write-At $rightLeft 7 ((T '掃描路徑' 'Scan Root') + ' :') Gray Black -FixedWidth $rightWidth
+    Write-At $rightLeft 8 $script:ScanRoot Cyan Black -FixedWidth $rightWidth -Ellipsis
+    Write-At $rightLeft 10 ((T '輸出資料夾' 'Output Folder') + ' :') Gray Black -FixedWidth $rightWidth
+    Write-At $rightLeft 11 $script:OutputRoot Cyan Black -FixedWidth $rightWidth -Ellipsis
+    Write-At $rightLeft 13 ((T '最新 HTML' 'Latest HTML') + ' :') Gray Black -FixedWidth $rightWidth
+    Write-At $rightLeft 14 $script:LastHtmlReport DarkCyan Black -FixedWidth $rightWidth -Ellipsis
+    Write-At $rightLeft 16 ((T '最新整理紀錄' 'Latest Organize Log') + ' :') Gray Black -FixedWidth $rightWidth
+    Write-At $rightLeft 17 $script:LastOrganizerLog DarkCyan Black -FixedWidth $rightWidth -Ellipsis
+}
+
+function Draw-LightBarMenu {
+    $menu = Get-MenuItems
+    $layout = Get-MenuLayout
+
+    Write-At $layout.Left 5 (T '主選單' 'Main Menu') Yellow Black -FixedWidth $layout.Width
+
+    for ($i = 0; $i -lt $menu.Count; $i++) {
+        Draw-OneMenuItem -Index $i -Selected:($i -eq $script:SelectedMenu)
+    }
+
+    Draw-SettingsPanel
+}
+
+function Draw-StatusBar {
+    $w = [Console]::WindowWidth
+    $h = [Console]::WindowHeight
+    $top = $h - 4
+    $resultCount = Get-ResultCount
+
+    Write-At 0 $top     (' '.PadRight($w - 1)) Black DarkCyan -NoPad
+    Write-At 0 ($top+1) (' '.PadRight($w - 1)) Black DarkCyan -NoPad
+    Write-At 0 ($top+2) (' '.PadRight($w - 1)) Black DarkCyan -NoPad
+    Write-At 0 ($top+3) (' '.PadRight($w - 1)) Black DarkCyan -NoPad
+
+    $line1 = '{0}: {1} | {2}: {3} | {4}: {5}' -f `
+        (T '模式' 'Mode'), $script:OrganizeMode, `
+        (T '只整理主檔' 'Primary Only'), $script:OrganizePrimaryOnly, `
+        (T '語系' 'Language'), $script:Lang
+
+    $line2 = '{0}: {1} | {2}: {3}' -f `
+        (T '結果筆數' 'Result Count'), $resultCount, `
+        (T '最新狀態' 'Last Status'), (Get-ShortDisplayText $script:LastStatus 45)
+
+    $line3 = '{0}: {1}' -f (T '摘要' 'Summary'), (Get-ShortDisplayText $script:LastSummary 100)
+    $line4 = (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / L language / Esc exit')
+
+    Write-At 1 $top     $line1 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
+    Write-At 1 ($top+1) $line2 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
+    Write-At 1 ($top+2) $line3 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
+    Write-At 1 ($top+3) $line4 Black DarkCyan -FixedWidth ($w - 2) -Ellipsis
+}
+
 # -----------------------------
 # UI
 # -----------------------------
 function Draw-UI {
-    Clear-Host
-    Write-Host '============================================================' -ForegroundColor Cyan
-    Write-Host (T 'Office 檔案救援分析工具 v5.10' 'Office Recovery Analyzer v5.10') -ForegroundColor White
-    Write-Host '============================================================' -ForegroundColor Cyan
-    Write-Host ''
-
-    Write-Host '[1] ' -NoNewline
-    Write-Host (T '開始掃描' 'Start Scan')
-
-    Write-Host '[2] ' -NoNewline
-    Write-Host (T '匯出 HTML 報表' 'Export HTML Report')
-
-    Write-Host '[3] ' -NoNewline
-    Write-Host (T '開啟輸出資料夾' 'Open Output Folder')
-
-    Write-Host '[4] ' -NoNewline
-    Write-Host (T '設定掃描資料夾' 'Set Scan Folder')
-
-    Write-Host '[5] ' -NoNewline
-    Write-Host (T '模擬自動改檔名' 'Preview Auto Rename')
-
-    Write-Host '[6] ' -NoNewline
-    Write-Host (T '實際自動改檔名' 'Apply Auto Rename')
-
-    Write-Host '[7] ' -NoNewline
-    Write-Host (T '開啟最新 HTML 報表' 'Open Latest HTML Report')
-
-    Write-Host '[8] ' -NoNewline
-    Write-Host (T '整理主檔/重複檔到資料夾' 'Organize Primary/Duplicate Files')
-
-    Write-Host '[9] ' -NoNewline
-    Write-Host (T '切換 Copy/Move 模式' 'Toggle Copy/Move Mode')
-
-    Write-Host '[0] ' -NoNewline
-    Write-Host (T '切換是否只整理主檔' 'Toggle Primary Only Mode')
-
-    Write-Host '[L] ' -NoNewline
-    Write-Host (T '切換語系' 'Switch Language')
-
-    Write-Host '[Esc] ' -NoNewline
-    Write-Host (T '離開' 'Exit')
-
-    Write-Host ''
-    Write-Host ((T '掃描路徑' 'Scan Root') + ' : ' + $script:ScanRoot) -ForegroundColor DarkCyan
-    Write-Host ((T '輸出資料夾' 'Output Folder') + ' : ' + $script:OutputRoot) -ForegroundColor DarkCyan
-    Write-Host ((T '整理模式' 'Organize Mode') + ' : ' + $script:OrganizeMode) -ForegroundColor DarkCyan
-    Write-Host ((T '只整理主檔' 'Primary Only') + ' : ' + $script:OrganizePrimaryOnly) -ForegroundColor DarkCyan
-
-    if (-not [string]::IsNullOrWhiteSpace($script:LastStatus)) {
-        Write-Host ((T '狀態' 'Status') + ' : ' + $script:LastStatus) -ForegroundColor Yellow
-    }
-    if (-not [string]::IsNullOrWhiteSpace($script:LastSummary)) {
-        Write-Host ((T '摘要' 'Summary') + ' : ' + $script:LastSummary) -ForegroundColor Yellow
-    }
-
-    Write-Host ''
+    $ok = Draw-Frame
+    if (-not $ok) { return }
+    Draw-LightBarMenu
+    Draw-StatusBar
 }
 
 function Show-ProgressLine {
@@ -1432,81 +1646,153 @@ function Set-ScanRoot {
     }
 }
 
+
+
+function Test-KeyMatch {
+    param(
+        $KeyInfo,
+        [string]$KeyName,
+        [int]$VirtualKeyCode = -1,
+        [string[]]$Chars = @()
+    )
+
+    if ($null -eq $KeyInfo) { return $false }
+
+    try {
+        if ($KeyName -and $KeyInfo.Key.ToString() -eq $KeyName) { return $true }
+    }
+    catch {}
+
+    try {
+        if ($VirtualKeyCode -ge 0 -and $KeyInfo.VirtualKeyCode -eq $VirtualKeyCode) { return $true }
+    }
+    catch {}
+
+    try {
+        $ch = [string]$KeyInfo.KeyChar
+        if ($Chars -and ($Chars -contains $ch)) { return $true }
+    }
+    catch {}
+
+    return $false
+}
+
 # -----------------------------
 # Bootstrap
 # -----------------------------
 Ensure-Folder $script:OutputRoot
 Update-Status -Status (T '就緒' 'Ready') -Summary ''
 
-while ($true) {
-    Draw-UI
-    $key = [Console]::ReadKey($true)
-
-    if ($key.Key -eq [ConsoleKey]::D1 -or $key.Key -eq [ConsoleKey]::NumPad1) {
-        Start-Scan
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D2 -or $key.Key -eq [ConsoleKey]::NumPad2) {
-        Export-HTML
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D3 -or $key.Key -eq [ConsoleKey]::NumPad3) {
-        Ensure-Folder $script:OutputRoot
-        Start-Process explorer.exe $script:OutputRoot | Out-Null
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D4 -or $key.Key -eq [ConsoleKey]::NumPad4) {
-        Set-ScanRoot
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D5 -or $key.Key -eq [ConsoleKey]::NumPad5) {
-        Preview-RenamePlan
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D6 -or $key.Key -eq [ConsoleKey]::NumPad6) {
-        Invoke-AutoRename
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D7 -or $key.Key -eq [ConsoleKey]::NumPad7) {
-        Open-LatestHtmlReport
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D8 -or $key.Key -eq [ConsoleKey]::NumPad8) {
-        Invoke-OrganizeFiles
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D9) {
-        Toggle-OrganizeMode
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::D0) {
-        Toggle-PrimaryOnly
-        continue
-    }
-
-    if ($key.Key -eq [ConsoleKey]::L) {
-        if ($script:Lang -eq 'zh-TW') {
-            $script:Lang = 'en-US'
+[Console]::CursorVisible = $false
+try {
+    $needsFullRedraw = $true
+    while ($true) {
+        if ($needsFullRedraw) {
+            Draw-UI
+            $needsFullRedraw = $false
         }
-        else {
-            $script:Lang = 'zh-TW'
-        }
-        Update-Status -Status (T '就緒' 'Ready') -Summary ''
-        continue
-    }
 
-    if ($key.Key -eq [ConsoleKey]::Escape) {
-        break
+        $key = [Console]::ReadKey($true)
+        $menuItems = Get-MenuItems
+
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'UpArrow' -VirtualKeyCode 38) {
+            $old = $script:SelectedMenu
+            if ($script:SelectedMenu -gt 0) { $script:SelectedMenu-- } else { $script:SelectedMenu = $menuItems.Count - 1 }
+            Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu
+            continue
+        }
+
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'DownArrow' -VirtualKeyCode 40) {
+            $old = $script:SelectedMenu
+            if ($script:SelectedMenu -lt ($menuItems.Count - 1)) { $script:SelectedMenu++ } else { $script:SelectedMenu = 0 }
+            Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu
+            continue
+        }
+
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'L' -VirtualKeyCode 76 -Chars @('l','L')) {
+            if ($script:Lang -eq 'zh-TW') {
+                $script:Lang = 'en-US'
+            }
+            else {
+                $script:Lang = 'zh-TW'
+            }
+            Update-Status -Status (T '就緒' 'Ready') -Summary ((T '語系已切換' 'Language switched') + ': ' + $script:Lang)
+            $needsFullRedraw = $true
+            continue
+        }
+
+        $action = $null
+
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'Enter' -VirtualKeyCode 13) {
+            $action = $menuItems[$script:SelectedMenu].Action
+        }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D1' -VirtualKeyCode 49 -Chars @('1')) { $script:SelectedMenu = 0; $action = 'Scan' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D2' -VirtualKeyCode 50 -Chars @('2')) { $script:SelectedMenu = 1; $action = 'ExportHtml' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D3' -VirtualKeyCode 51 -Chars @('3')) { $script:SelectedMenu = 2; $action = 'OpenOutput' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D4' -VirtualKeyCode 52 -Chars @('4')) { $script:SelectedMenu = 3; $action = 'SetScanRoot' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D5' -VirtualKeyCode 53 -Chars @('5')) { $script:SelectedMenu = 4; $action = 'PreviewRename' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D6' -VirtualKeyCode 54 -Chars @('6')) { $script:SelectedMenu = 5; $action = 'ApplyRename' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D7' -VirtualKeyCode 55 -Chars @('7')) { $script:SelectedMenu = 6; $action = 'OpenHtml' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D8' -VirtualKeyCode 56 -Chars @('8')) { $script:SelectedMenu = 7; $action = 'Organize' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D9' -VirtualKeyCode 57 -Chars @('9')) { $script:SelectedMenu = 8; $action = 'ToggleMode' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D0' -VirtualKeyCode 48 -Chars @('0')) { $script:SelectedMenu = 9; $action = 'TogglePrimaryOnly' }
+        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'Escape' -VirtualKeyCode 27) { $action = 'Exit' }
+
+        switch ($action) {
+            'Scan' { Start-Scan; $needsFullRedraw = $true; continue }
+            'ExportHtml' { Export-HTML; $needsFullRedraw = $true; continue }
+            'OpenOutput' {
+                Ensure-Folder $script:OutputRoot
+                Start-Process explorer.exe $script:OutputRoot | Out-Null
+                Update-Status -Status (T '完成' 'Done') -Summary $script:OutputRoot
+                Draw-StatusBar
+                Draw-SettingsPanel
+                continue
+            }
+            'SetScanRoot' {
+                [Console]::CursorVisible = $true
+                Set-ScanRoot
+                [Console]::CursorVisible = $false
+                $needsFullRedraw = $true
+                continue
+            }
+            'PreviewRename' { Preview-RenamePlan; $needsFullRedraw = $true; continue }
+            'ApplyRename' {
+                [Console]::CursorVisible = $true
+                Invoke-AutoRename
+                [Console]::CursorVisible = $false
+                $needsFullRedraw = $true
+                continue
+            }
+            'OpenHtml' { Open-LatestHtmlReport; $needsFullRedraw = $true; continue }
+            'Organize' {
+                [Console]::CursorVisible = $true
+                Invoke-OrganizeFiles
+                [Console]::CursorVisible = $false
+                $needsFullRedraw = $true
+                continue
+            }
+            'ToggleMode' {
+                Toggle-OrganizeMode
+                Update-Status -Status (T '完成' 'Done') -Summary ((T '整理模式已切換為' 'Organize mode switched to') + ': ' + $script:OrganizeMode)
+                Draw-StatusBar
+                Draw-SettingsPanel
+                Draw-OneMenuItem -Index $script:SelectedMenu -Selected
+                continue
+            }
+            'TogglePrimaryOnly' {
+                Toggle-PrimaryOnly
+                Update-Status -Status (T '完成' 'Done') -Summary ((T '只整理主檔已切換為' 'Primary only switched to') + ': ' + $script:OrganizePrimaryOnly)
+                Draw-StatusBar
+                Draw-SettingsPanel
+                Draw-OneMenuItem -Index $script:SelectedMenu -Selected
+                continue
+            }
+            'Exit' { return }
+        }
     }
 }
-
-Clear-Host
+finally {
+    [Console]::CursorVisible = $true
+    Clear-Host
+}
