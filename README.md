@@ -1,28 +1,46 @@
-# Office Recovery Toolkit v5.5 (LightBar Menu)
-
-(en-US)  
-This version includes:  
-
-Upgrade report features  
-Refine report styling  
-Change Menu to LightBar Menu  
-Scans docx/xlsx/pptx/doc/xls files  
-zh-TW locale displays Traditional Chinese UI; other locales display English UI (manual switch supported)  
-Uses SHA256 hash for duplicate file detection  
-File content fingerprint comparison  
-Parses all worksheets in Excel files  
-Intelligent naming for Excel files  
-Role classification: Primary / Duplicate / Unique / Corrupted files  
-Simulate file renaming / Actual file renaming  
-HTML report  
-Open the latest HTML report (using the system’s default browser)  
-Safe organization mode: Copy / Move (file handling modes)  
-Primary Only toggle  
-Organize files by extension  
-Quality Score evaluation  
-HTML highlights Primary file ⭐ Primary  
+# Office Recovery Toolkit v5.8 (LightBar Menu)  
   
-(zh-TW)  
+Usage:  
+After extracting the files, run:  
+OfficeRecoveryToolkit.cmd  
+  
+Required Installation  
+Microsoft Office Word, Excel, and PowerPoint 2007 File Format Compatibility Pack  
+https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
+  
+Features in This Version  
+Enhanced reporting functionality  
+Improved report styling  
+LightBar-style interactive menu  
+Supports scanning: docx / xlsx / pptx / doc / xls  
+zh-TW locale displays Traditional Chinese UI; other locales display English (manual toggle supported)  
+Duplicate file detection using SHA256 hash  
+File content fingerprint comparison  
+Full worksheet parsing for Excel files  
+Intelligent file naming for Excel documents  
+File role classification:  
+Primary files  
+Duplicate files  
+Unique files  
+Corrupted files  
+Simulated file renaming / Actual file renaming  
+HTML report generation  
+Open latest HTML report (using system default browser)  
+Safe organization mode: Copy / Move (file handling mode)  
+Primary Only toggle  
+Organize files by file extension  
+Quality Score evaluation  
+Highlight Primary files in HTML with ⭐  
+  
+(zh-TW)
+  
+使用方式:  
+解壓縮後，執行: OfficeRecoveryToolkit.cmd   
+  
+必要安裝:  
+Microsoft Office Word、Excel 及 PowerPoint 2007 檔案格式相容性套件  
+https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
+  
 這版包含：  
   
 強化報表功能  
