@@ -1,0 +1,18 @@
+Build example (.NET 10 SDK required):
+
+dotnet publish .\OfficeEncryptionProbe.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+
+Output EXE:
+.\bin\Release\net10.0\win-x64\publish\OfficeEncryptionProbe.exe
+
+CLI usage:
+OfficeEncryptionProbe.exe --json --path "C:\Test\sample.xls"
+
+Exit codes:
+0 = NotProtected
+1 = Encrypted
+2 = WriteProtectedOnly
+3 = PossiblyProtected
+4 = Corrupt
+5 = Unsupported
+6 = Error
