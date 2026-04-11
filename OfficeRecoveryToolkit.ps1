@@ -1,5 +1,5 @@
 ﻿# ================================
-# Office Recovery Toolkit v5.1
+# Office Recovery Toolkit v5.7
 # PowerShell 5.1 Compatible
 # ================================
 
@@ -17,10 +17,23 @@ $script:LastStatus = ''
 $script:LastSummary = ''
 $script:LastHtmlReport = ''
 $script:LastOrganizerLog = ''
+$script:LastCsvReport = ''
+$script:LastRenamePreviewCsv = ''
+$script:LastRenamePreviewHtml = ''
+$script:LastRenameLog = ''
+$script:SettingsPath = Join-Path $PSScriptRoot 'OfficeRecoveryToolkit.settings.json'
 
-# v4.1 / v5 settings
+# v5.4 settings
 $script:OrganizeMode = 'Copy'   # Copy / Move
 $script:OrganizePrimaryOnly = $true
+$script:LegacyQuickMode = $true
+$script:LegacyMaxReadKB = 512
+$script:LegacyTextPreviewLength = 200
+$script:LegacyOfficeFallback = $true
+$script:LegacyOfficeTimeoutSec = 45
+$script:LegacyOfficeMaxFileMB = 32
+$script:LegacyConversionMode = $true
+$script:LegacyKeepTempConverted = $false
 $script:SelectedMenu = 0
 $script:UiCache = @{
     WindowWidth = 0
@@ -28,6 +41,8 @@ $script:UiCache = @{
     SettingsLines = @()
     StatusLines = @()
 }
+
+$script:OfficeInterop = @{ Word = $null; Excel = $null; PowerPoint = $null; Initialized = $false }
 
 # -----------------------------
 # Text Helper
@@ -51,6 +66,13 @@ function Ensure-Folder {
     }
 }
 
+function Reset-UiCache {
+    $script:UiCache.WindowWidth = 0
+    $script:UiCache.WindowHeight = 0
+    $script:UiCache.SettingsLines = @()
+    $script:UiCache.StatusLines = @()
+}
+
 function Wait-Return {
     Write-Host ''
     Write-Host (T '按任意鍵返回主選單...' 'Press any key to return to the main menu...') -ForegroundColor Yellow
@@ -60,6 +82,7 @@ function Wait-Return {
     catch {
         Read-Host | Out-Null
     }
+    Reset-UiCache
 }
 
 function Update-Status {
@@ -71,12 +94,165 @@ function Update-Status {
     $script:LastSummary = $Summary
 }
 
+function Save-AppState {
+    try {
+        $state = [ordered]@{
+            Lang = $script:Lang
+            ScanRoot = $script:ScanRoot
+            OutputRoot = $script:OutputRoot
+            OrganizeMode = $script:OrganizeMode
+            OrganizePrimaryOnly = $script:OrganizePrimaryOnly
+            LegacyQuickMode = $script:LegacyQuickMode
+            LegacyMaxReadKB = $script:LegacyMaxReadKB
+            LegacyTextPreviewLength = $script:LegacyTextPreviewLength
+            LegacyOfficeFallback = $script:LegacyOfficeFallback
+            LegacyOfficeTimeoutSec = $script:LegacyOfficeTimeoutSec
+            LegacyOfficeMaxFileMB = $script:LegacyOfficeMaxFileMB
+            LegacyConversionMode = $script:LegacyConversionMode
+            LegacyKeepTempConverted = $script:LegacyKeepTempConverted
+            LastHtmlReport = $script:LastHtmlReport
+            LastOrganizerLog = $script:LastOrganizerLog
+            LastCsvReport = $script:LastCsvReport
+            LastRenamePreviewCsv = $script:LastRenamePreviewCsv
+            LastRenamePreviewHtml = $script:LastRenamePreviewHtml
+            LastRenameLog = $script:LastRenameLog
+            LastStatus = $script:LastStatus
+            LastSummary = $script:LastSummary
+            SavedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        }
+        $json = $state | ConvertTo-Json -Depth 4
+        [IO.File]::WriteAllText($script:SettingsPath, $json, [Text.Encoding]::UTF8)
+    }
+    catch {}
+}
+
+function Load-AppState {
+    if (-not (Test-Path -LiteralPath $script:SettingsPath)) { return }
+    try {
+        $cfg = Get-Content -LiteralPath $script:SettingsPath -Raw | ConvertFrom-Json
+        if ($cfg.Lang) { $script:Lang = [string]$cfg.Lang }
+        if ($cfg.ScanRoot) { $script:ScanRoot = [string]$cfg.ScanRoot }
+        if ($cfg.OutputRoot) { $script:OutputRoot = [string]$cfg.OutputRoot }
+        if ($cfg.OrganizeMode) { $script:OrganizeMode = [string]$cfg.OrganizeMode }
+        if ($null -ne $cfg.OrganizePrimaryOnly) { $script:OrganizePrimaryOnly = [bool]$cfg.OrganizePrimaryOnly }
+        if ($null -ne $cfg.LegacyQuickMode) { $script:LegacyQuickMode = [bool]$cfg.LegacyQuickMode }
+        if ($cfg.LegacyMaxReadKB) { $script:LegacyMaxReadKB = [int]$cfg.LegacyMaxReadKB }
+        if ($cfg.LegacyTextPreviewLength) { $script:LegacyTextPreviewLength = [int]$cfg.LegacyTextPreviewLength }
+        if ($null -ne $cfg.LegacyOfficeFallback) { $script:LegacyOfficeFallback = [bool]$cfg.LegacyOfficeFallback }
+        if ($cfg.LegacyOfficeTimeoutSec) { $script:LegacyOfficeTimeoutSec = [int]$cfg.LegacyOfficeTimeoutSec }
+        if ($cfg.LegacyOfficeMaxFileMB) { $script:LegacyOfficeMaxFileMB = [int]$cfg.LegacyOfficeMaxFileMB }
+        if ($null -ne $cfg.LegacyConversionMode) { $script:LegacyConversionMode = [bool]$cfg.LegacyConversionMode }
+        if ($null -ne $cfg.LegacyKeepTempConverted) { $script:LegacyKeepTempConverted = [bool]$cfg.LegacyKeepTempConverted }
+        if ($cfg.LastHtmlReport) { $script:LastHtmlReport = [string]$cfg.LastHtmlReport }
+        if ($cfg.LastOrganizerLog) { $script:LastOrganizerLog = [string]$cfg.LastOrganizerLog }
+        if ($cfg.LastCsvReport) { $script:LastCsvReport = [string]$cfg.LastCsvReport }
+        if ($cfg.LastRenamePreviewCsv) { $script:LastRenamePreviewCsv = [string]$cfg.LastRenamePreviewCsv }
+        if ($cfg.LastRenamePreviewHtml) { $script:LastRenamePreviewHtml = [string]$cfg.LastRenamePreviewHtml }
+        if ($cfg.LastRenameLog) { $script:LastRenameLog = [string]$cfg.LastRenameLog }
+        if ($cfg.LastStatus) { $script:LastStatus = [string]$cfg.LastStatus }
+        if ($cfg.LastSummary) { $script:LastSummary = [string]$cfg.LastSummary }
+    }
+    catch {}
+}
+
+
+function Restore-ResultsFromLastCsv {
+    if ($script:Results -and @($script:Results).Count -gt 0) { return }
+
+    if ([string]::IsNullOrWhiteSpace($script:LastCsvReport)) { return }
+    if (-not (Test-Path -LiteralPath $script:LastCsvReport)) { return }
+
+    try {
+        $rows = Import-Csv -LiteralPath $script:LastCsvReport -Encoding UTF8
+        if ($rows) {
+            foreach ($row in $rows) {
+                if ($row.SizeKB -ne $null -and $row.SizeKB -ne '') {
+                    try { $row.SizeKB = [double]$row.SizeKB } catch {}
+                }
+                if ($row.RoleRank -ne $null -and $row.RoleRank -ne '') {
+                    try { $row.RoleRank = [int]$row.RoleRank } catch {}
+                }
+            }
+            $script:Results = @($rows)
+        }
+    }
+    catch {
+    }
+}
+
+function Save-StateAndStatus {
+    param(
+        [string]$Status = $null,
+        [string]$Summary = $null
+    )
+    if ($null -ne $Status) { $script:LastStatus = $Status }
+    if ($null -ne $Summary) { $script:LastSummary = $Summary }
+    Save-AppState
+}
+
 function Get-SafeHtml {
     param([string]$Text)
     if ($null -eq $Text) { return '' }
     Add-Type -AssemblyName System.Web
     return [System.Web.HttpUtility]::HtmlEncode($Text)
 }
+
+function Get-FriendlyParseReason {
+    param(
+        [string]$Reason,
+        [string]$ConversionStatus
+    )
+
+    $reasonText = [string]$Reason
+    $convText = [string]$ConversionStatus
+
+    if ([string]::IsNullOrWhiteSpace($reasonText)) {
+        if (-not [string]::IsNullOrWhiteSpace($convText)) {
+            return $convText
+        }
+        return ''
+    }
+
+    switch -Regex ($reasonText) {
+        '^RTF$' {
+            return (T 'RTF 文字已成功擷取' 'RTF text extracted successfully')
+        }
+        '^PDF text$' {
+            return (T 'PDF 文字已成功擷取' 'PDF text extracted successfully')
+        }
+        '^Unsupported extension$' {
+            return (T '不支援的副檔名' 'Unsupported extension')
+        }
+        'timeout|逾時' {
+            if (-not [string]::IsNullOrWhiteSpace($convText)) {
+                return ((T '轉換逾時' 'Conversion timeout') + ' / ' + $convText)
+            }
+            return (T '轉換逾時' 'Conversion timeout')
+        }
+        'PDF text could not be extracted; fell back to file hash|PDF 無法抽出文字，改用檔案雜湊' {
+            return (T 'PDF 無法抽出文字，已改用檔案雜湊比對' 'PDF text could not be extracted; fell back to file hash matching')
+        }
+        'Converter tool not found|ConverterNotFound' {
+            return (T '找不到 Office 相容性套件轉換工具' 'Office compatibility converter tool was not found')
+        }
+        'Converter produced no output file|ConverterFailed' {
+            return (T '轉換工具執行完成，但沒有產出新版檔案' 'Converter finished but did not produce an output file')
+        }
+        'not installed|ActiveX component can''t create object|無法建立 ActiveX' {
+            return (T '找不到對應的 Office 應用程式，無法進行轉換' 'The required Office application is not available for conversion')
+        }
+        'password|密碼' {
+            return (T '檔案可能受密碼保護，無法自動轉換或解析' 'The file may be password-protected and could not be converted or parsed automatically')
+        }
+        default {
+            if (-not [string]::IsNullOrWhiteSpace($convText) -and $convText -notmatch [regex]::Escape($reasonText)) {
+                return ($reasonText + ' / ' + $convText)
+            }
+            return $reasonText
+        }
+    }
+}
+
 
 function Get-SizeKB {
     param([Int64]$Bytes)
@@ -115,8 +291,10 @@ function Get-FileCategory {
         '.xls'  { return 'Excel' }
         '.docx' { return 'Word' }
         '.doc'  { return 'Word' }
+        '.rtf'  { return 'Word' }
         '.pptx' { return 'PowerPoint' }
         '.ppt'  { return 'PowerPoint' }
+        '.pdf'  { return 'PDF' }
         default { return 'Other' }
     }
 }
@@ -261,7 +439,7 @@ function Draw-Frame {
     }
 
     Write-At 0 0  ('=' * ($w - 1)) Cyan Black
-    Write-At 2 1  (T 'Office 檔案救援分析工具 v5 LightBar' 'Office Recovery Analyzer v5 LightBar') White DarkBlue
+    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8 LightBar' 'Office Recovery Analyzer v5.8 LightBar') White DarkBlue
     Write-At 2 2  (T '↑↓ 光棒選擇  Enter 執行  數字快速鍵  L 切換語系  Esc 離開' '↑↓ Select  Enter Run  Number hotkeys  L switch language  Esc exit') Gray Black
     Write-At 0 3  ('=' * ($w - 1)) Cyan Black
     return $true
@@ -279,18 +457,30 @@ function Get-MenuItems {
         @{ Key='8'; Text=(T '整理主檔/重複檔到資料夾' 'Organize Primary/Duplicate Files'); Action='Organize' },
         @{ Key='9'; Text=(T '切換 Copy/Move 模式' 'Toggle Copy/Move Mode'); Action='ToggleMode' },
         @{ Key='0'; Text=(T '切換是否只整理主檔' 'Toggle Primary Only Mode'); Action='TogglePrimaryOnly' },
+        @{ Key='C'; Text=(T '切換 Legacy 轉新版' 'Toggle Legacy Convert'); Action='ToggleLegacyConversion' },
         @{ Key='L'; Text=(T '切換語系' 'Switch Language'); Action='ToggleLang' },
         @{ Key='Esc'; Text=(T '離開' 'Exit'); Action='Exit' }
     )
 }
 
 function Get-MenuLayout {
+    $windowWidth = [Console]::WindowWidth
+    $left = 4
+    $gap = 3
+    $menuWidth = 38
+
+    if ($windowWidth -lt 110) { $menuWidth = 34 }
+    if ($windowWidth -lt 96)  { $menuWidth = 30 }
+
+    $rightLeft = $left + $menuWidth + $gap
+    $rightWidth = [Math]::Max(($windowWidth - $rightLeft - 2), 18)
+
     return [PSCustomObject]@{
         Top        = 6
-        Left       = 4
-        Width      = 42
-        RightLeft  = 52
-        RightWidth = [Math]::Max(([Console]::WindowWidth - 54), 20)
+        Left       = $left
+        Width      = $menuWidth
+        RightLeft  = $rightLeft
+        RightWidth = $rightWidth
     }
 }
 
@@ -334,21 +524,23 @@ function Draw-SettingsPanel {
     $layout = Get-MenuLayout
     $rightLeft = $layout.RightLeft
     $rightWidth = $layout.RightWidth
+    $valueWidth = [Math]::Max($rightWidth - 14, 6)
 
     $newLines = @(
         (T '目前設定' 'Current Settings'),
-        '',
-        ((T '掃描路徑' 'Scan Root') + ' :'),
-        $script:ScanRoot,
-        '',
-        ((T '輸出資料夾' 'Output Folder') + ' :'),
-        $script:OutputRoot,
-        '',
-        ((T '最新 HTML' 'Latest HTML') + ' :'),
-        $script:LastHtmlReport,
-        '',
-        ((T '最新整理紀錄' 'Latest Organize Log') + ' :'),
-        $script:LastOrganizerLog
+        ((T '掃描路徑' 'Scan') + ' : ' + (Get-ShortDisplayText $script:ScanRoot $valueWidth)),
+        ((T '輸出資料夾' 'Output') + ' : ' + (Get-ShortDisplayText $script:OutputRoot $valueWidth)),
+        ((T '最新 CSV' 'CSV') + ' : ' + (Get-ShortDisplayText $script:LastCsvReport $valueWidth)),
+        ((T '最新 HTML' 'HTML') + ' : ' + (Get-ShortDisplayText $script:LastHtmlReport $valueWidth)),
+        ((T '模擬改名 CSV' 'Preview CSV') + ' : ' + (Get-ShortDisplayText $script:LastRenamePreviewCsv $valueWidth)),
+        ((T '模擬改名 HTML' 'Preview HTML') + ' : ' + (Get-ShortDisplayText $script:LastRenamePreviewHtml $valueWidth)),
+        ((T 'Legacy 轉新版' 'Legacy Convert') + ' : ' + ([string]$script:LegacyConversionMode)),
+        ((T '保留暫存轉檔' 'Keep Temp') + ' : ' + ([string]$script:LegacyKeepTempConverted)),
+        ((T '最新改名紀錄' 'Rename Log') + ' : ' + (Get-ShortDisplayText $script:LastRenameLog $valueWidth)),
+        ((T '最新整理紀錄' 'Organize Log') + ' : ' + (Get-ShortDisplayText $script:LastOrganizerLog $valueWidth)),
+        ((T '舊檔快速模式' 'Legacy Quick') + ' : ' + ([string]$script:LegacyQuickMode)),
+        ((T 'Office 背景解析' 'Office Fallback') + ' : ' + ([string]$script:LegacyOfficeFallback)),
+        ((T 'Office 逾時秒數' 'Timeout Sec') + ' : ' + ([string]$script:LegacyOfficeTimeoutSec))
     )
 
     $oldLines = @($script:UiCache.SettingsLines)
@@ -362,9 +554,6 @@ function Draw-SettingsPanel {
             $row = 5 + $i
             $fg = [ConsoleColor]::Gray
             if ($i -eq 0) { $fg = [ConsoleColor]::Yellow }
-            elseif ($i -in 3,6,9,12) { $fg = [ConsoleColor]::Cyan }
-            elseif ($i -in 1,4,7,10) { $fg = [ConsoleColor]::Black }
-
             Write-At $rightLeft $row $newLine $fg Black -FixedWidth $rightWidth -Ellipsis
         }
     }
@@ -399,7 +588,7 @@ function Draw-StatusBar {
         ('{0}: {1} | {2}: {3} | {4}: {5}' -f (T '模式' 'Mode'), $script:OrganizeMode, (T '只整理主檔' 'Primary Only'), $script:OrganizePrimaryOnly, (T '語系' 'Language'), $script:Lang),
         ('{0}: {1} | {2}: {3}' -f (T '結果筆數' 'Result Count'), $resultCount, (T '最新狀態' 'Last Status'), (Get-ShortDisplayText $script:LastStatus 45)),
         ('{0}: {1}' -f (T '摘要' 'Summary'), (Get-ShortDisplayText $script:LastSummary 100)),
-        (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / L language / Esc exit')
+        (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / C Legacy轉檔 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / C legacy convert / L language / Esc exit')
     )
 
     $oldLines = @($script:UiCache.StatusLines)
@@ -424,6 +613,15 @@ function Draw-UI {
     $currentWidth = [Console]::WindowWidth
     $currentHeight = [Console]::WindowHeight
     $force = $false
+
+    if ($script:ForceFullRedraw) {
+        $script:UiCache.WindowWidth = 0
+        $script:UiCache.WindowHeight = 0
+        $script:UiCache.SettingsLines = @()
+        $script:UiCache.StatusLines = @()
+        $force = $true
+        $script:ForceFullRedraw = $false
+    }
 
     if ($script:UiCache.WindowWidth -ne $currentWidth -or $script:UiCache.WindowHeight -ne $currentHeight) {
         $script:UiCache.WindowWidth = $currentWidth
@@ -524,6 +722,218 @@ function Normalize-XmlText {
     return $t
 }
 
+
+function Normalize-PlainText {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+
+    $t = $Text
+    $t = $t -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', ' '
+    $t = $t -replace '\s+', ' '
+    return $t.Trim()
+}
+
+function Get-RtfPlainText {
+    param([string]$FilePath)
+
+    if (-not (Test-Path -LiteralPath $FilePath)) { return '' }
+
+    $rtf = ''
+    try {
+        $sr = New-Object System.IO.StreamReader($FilePath, $true)
+        try {
+            $rtf = $sr.ReadToEnd()
+        }
+        finally {
+            $sr.Close()
+        }
+    }
+    catch {
+        try {
+            $rtf = [System.Text.Encoding]::Default.GetString([System.IO.File]::ReadAllBytes($FilePath))
+        }
+        catch {
+            $rtf = ''
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($rtf)) { return '' }
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $box = New-Object System.Windows.Forms.RichTextBox
+        try {
+            $box.Rtf = $rtf
+            return (Normalize-PlainText $box.Text)
+        }
+        finally {
+            $box.Dispose()
+        }
+    }
+    catch {
+        $t = $rtf
+        $t = $t -replace '\\par[d]?', ' '
+        $t = $t -replace '\\tab', ' '
+        $t = $t -replace '\\u-?\d+\??', ' '
+        $t = $t -replace "\\'[0-9a-fA-F]{2}", ' '
+        $t = $t -replace '\\[a-zA-Z]+\d* ?', ' '
+        $t = $t -replace '[{}]', ' '
+        return (Normalize-PlainText $t)
+    }
+}
+
+
+function Get-RtfTextBestEffort {
+    param([string]$FilePath)
+    return (Get-RtfPlainText -FilePath $FilePath)
+}
+
+function Expand-PdfFlateBytes {
+    param([byte[]]$Bytes)
+
+    if (-not $Bytes -or $Bytes.Length -lt 6) { return '' }
+
+    $candidates = @(
+        @{ Start = 0; EndTrim = 0 },
+        @{ Start = 2; EndTrim = 0 },
+        @{ Start = 0; EndTrim = 1 },
+        @{ Start = 2; EndTrim = 1 }
+    )
+
+    foreach ($c in $candidates) {
+        try {
+            $start = [int]$c.Start
+            $len = $Bytes.Length - $start - [int]$c.EndTrim
+            if ($len -le 4) { continue }
+            $slice = New-Object byte[] $len
+            [Array]::Copy($Bytes, $start, $slice, 0, $len)
+
+            $ms = New-Object IO.MemoryStream(,$slice)
+            try {
+                $ds = New-Object IO.Compression.DeflateStream($ms, [IO.Compression.CompressionMode]::Decompress)
+                try {
+                    $out = New-Object IO.MemoryStream
+                    try {
+                        $buffer = New-Object byte[] 4096
+                        while (($read = $ds.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                            $out.Write($buffer, 0, $read)
+                        }
+                        $raw = $out.ToArray()
+                        if ($raw -and $raw.Length -gt 0) {
+                            return [Text.Encoding]::GetEncoding('ISO-8859-1').GetString($raw)
+                        }
+                    }
+                    finally {
+                        $out.Dispose()
+                    }
+                }
+                finally {
+                    $ds.Dispose()
+                }
+            }
+            finally {
+                $ms.Dispose()
+            }
+        }
+        catch {
+        }
+    }
+
+    return ''
+}
+
+function Get-PdfTextBestEffort {
+    param(
+        [string]$FilePath,
+        [int]$MaxChars = 6000
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath)) { return '' }
+
+    try {
+        $bytes = [IO.File]::ReadAllBytes($FilePath)
+    }
+    catch {
+        return ''
+    }
+
+    if (-not $bytes -or $bytes.Length -eq 0) { return '' }
+
+    $latin1 = [Text.Encoding]::GetEncoding('ISO-8859-1').GetString($bytes)
+    $parts = New-Object System.Collections.ArrayList
+
+    try {
+        $metaMatches = [regex]::Matches($latin1, '/(Title|Author|Subject|Keywords)\s*\((.*?)\)', 'Singleline')
+        foreach ($m in $metaMatches) {
+            $v = Normalize-PlainText $m.Groups[2].Value
+            if ($v.Length -ge 2) { [void]$parts.Add($v) }
+        }
+    }
+    catch {
+    }
+
+    try {
+        $streamMatches = [regex]::Matches($latin1, '(?s)(<<.*?>>)\s*stream\r?\n(.*?)\r?\nendstream')
+        foreach ($m in $streamMatches) {
+            $dict = [string]$m.Groups[1].Value
+            $streamData = [string]$m.Groups[2].Value
+            $streamText = ''
+
+            if ($dict -match '/FlateDecode') {
+                try {
+                    $rawBytes = [Text.Encoding]::GetEncoding('ISO-8859-1').GetBytes($streamData)
+                    $streamText = Expand-PdfFlateBytes -Bytes $rawBytes
+                }
+                catch {
+                    $streamText = ''
+                }
+            }
+            else {
+                $streamText = $streamData
+            }
+
+            if ($streamText) {
+                $textMatches = [regex]::Matches($streamText, '\((?:\\.|[^\\)]){2,}\)')
+                foreach ($tm in $textMatches) {
+                    $s = $tm.Value
+                    if ($s.Length -ge 2) {
+                        $s = $s.Substring(1, $s.Length - 2)
+                        $s = $s -replace '\\\(', '('
+                        $s = $s -replace '\\\)', ')'
+                        $s = $s -replace '\\n', ' '
+                        $s = $s -replace '\\r', ' '
+                        $s = $s -replace '\\t', ' '
+                        $s = $s -replace '\\\\', '\'
+                        $s = Normalize-PlainText $s
+                        if ($s.Length -ge 2) { [void]$parts.Add($s) }
+                    }
+                }
+            }
+
+            if ((($parts -join ' ').Length) -ge $MaxChars) { break }
+        }
+    }
+    catch {
+    }
+
+    if ($parts.Count -eq 0) {
+        try {
+            $fallback = Get-LegacyReadableText -FilePath $FilePath -MaxReadKB 1024
+            if ($fallback) { [void]$parts.Add($fallback) }
+        }
+        catch {
+        }
+    }
+
+    $text = Normalize-PlainText ($parts -join ' ')
+    if ($text.Length -gt $MaxChars) {
+        $text = $text.Substring(0, $MaxChars)
+    }
+
+    return $text
+}
+
 function Get-ExcelSmartName {
     param([string]$FilePath)
 
@@ -594,6 +1004,778 @@ function Get-ExcelSmartName {
     }
 }
 
+
+function Test-LegacyTextLooksUseful {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+
+    $t = ($Text -replace '\s+', ' ').Trim()
+    if ($t.Length -lt 12) { return $false }
+
+    $questionCount = ([regex]::Matches($t, '\?')).Count
+    if ($t.Length -gt 0) {
+        $ratio = $questionCount / [double]$t.Length
+        if ($ratio -gt 0.30) { return $false }
+    }
+
+    if ($t -notmatch '[\u4E00-\u9FFFA-Za-z0-9]{3,}') { return $false }
+    return $true
+}
+
+function Get-LegacyOfficeTextViaHelper {
+    param(
+        [string]$FilePath,
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType,
+        [int]$TimeoutSec = 8,
+        [int]$MaxChars = 4000
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath)) { return '' }
+
+    $helperOut = Join-Path $env:TEMP ('ORT_Helper_' + [guid]::NewGuid().ToString() + '.txt')
+    $escapedPath = $FilePath.Replace("'", "''")
+    $escapedOut  = $helperOut.Replace("'", "''")
+    $escapedApp  = $AppType.Replace("'", "''")
+
+    $helper = @"
+`$ErrorActionPreference = 'SilentlyContinue'
+`$filePath = '$escapedPath'
+`$outPath  = '$escapedOut'
+`$appType  = '$escapedApp'
+`$maxChars = $MaxChars
+`$result = ''
+
+function Normalize-OfficeTextLocal([string]`$text) {
+    if ([string]::IsNullOrWhiteSpace(`$text)) { return '' }
+    `$t = `$text -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', ' '
+    `$t = `$t -replace '\s+', ' '
+    `$t = `$t.Trim()
+    if (`$t.Length -gt `$maxChars) { `$t = `$t.Substring(0, `$maxChars) }
+    return `$t
+}
+
+if (`$appType -eq 'Excel') {
+    `$excel = `$null
+    `$wb = `$null
+    try {
+        `$excel = New-Object -ComObject Excel.Application
+        `$excel.Visible = `$false
+        `$excel.DisplayAlerts = `$false
+        `$excel.ScreenUpdating = `$false
+        `$excel.EnableEvents = `$false
+        `$wb = `$excel.Workbooks.Open(`$filePath, 0, `$false)
+        `$parts = New-Object System.Collections.ArrayList
+        foreach (`$ws in `$wb.Worksheets) {
+            try {
+                if (`$ws.Name) { [void]`$parts.Add([string]`$ws.Name) }
+                `$used = `$ws.UsedRange
+                if (`$used) {
+                    `$vals = `$used.Value2
+                    if (`$vals -is [System.Array]) {
+                        foreach (`$item in `$vals) {
+                            if (`$null -ne `$item) { [void]`$parts.Add([string]`$item) }
+                            if (((`$parts -join ' ').Length) -gt `$maxChars) { break }
+                        }
+                    } elseif (`$used.Text) {
+                        [void]`$parts.Add([string]`$used.Text)
+                    }
+                }
+            } catch {}
+            if (((`$parts -join ' ').Length) -gt `$maxChars) { break }
+        }
+        `$result = Normalize-OfficeTextLocal (`$parts -join ' ')
+    } catch {
+        `$result = ''
+    } finally {
+        if (`$wb) { try { `$wb.Close(`$false) } catch {} ; try { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject(`$wb) } catch {} }
+        if (`$excel) { try { `$excel.Quit() } catch {} ; try { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject(`$excel) } catch {} }
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    }
+}
+elseif (`$appType -eq 'Word') {
+    `$word = `$null
+    `$doc = `$null
+    try {
+        `$word = New-Object -ComObject Word.Application
+        `$word.Visible = `$false
+        `$word.DisplayAlerts = 0
+        `$doc = `$word.Documents.Open(`$filePath, `$false, `$false)
+        `$parts = @()
+        try {
+            if (`$doc.BuiltInDocumentProperties('Title').Value) { `$parts += [string]`$doc.BuiltInDocumentProperties('Title').Value }
+        } catch {}
+        try { if (`$doc.Paragraphs.Count -gt 0) { `$parts += [string]`$doc.Paragraphs.Item(1).Range.Text } } catch {}
+        try { `$parts += [string]`$doc.Content.Text } catch {}
+        `$result = Normalize-OfficeTextLocal (`$parts -join ' ')
+    } catch {
+        `$result = ''
+    } finally {
+        if (`$doc) { try { `$doc.Close() } catch {} ; try { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject(`$doc) } catch {} }
+        if (`$word) { try { `$word.Quit() } catch {} ; try { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject(`$word) } catch {} }
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    }
+}
+elseif (`$appType -eq 'PowerPoint') {
+    `$ppt = `$null
+    `$pres = `$null
+    try {
+        `$ppt = New-Object -ComObject PowerPoint.Application
+        `$ppt.Visible = 1
+        `$pres = `$ppt.Presentations.Open(`$filePath, `$false, `$true, `$false)
+        `$parts = New-Object System.Collections.ArrayList
+        foreach (`$slide in `$pres.Slides) {
+            try {
+                foreach (`$shape in `$slide.Shapes) {
+                    try {
+                        if (`$shape.HasTextFrame -and `$shape.TextFrame.HasText) {
+                            `$txt = [string]`$shape.TextFrame.TextRange.Text
+                            if (-not [string]::IsNullOrWhiteSpace(`$txt)) { [void]`$parts.Add(`$txt) }
+                        }
+                    } catch {}
+                    if (((`$parts -join ' ').Length) -gt `$maxChars) { break }
+                }
+            } catch {}
+            if (((`$parts -join ' ').Length) -gt `$maxChars) { break }
+        }
+        `$result = Normalize-OfficeTextLocal (`$parts -join ' ')
+    } catch {
+        `$result = ''
+    } finally {
+        if (`$pres) { try { `$pres.Close() } catch {} ; try { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject(`$pres) } catch {} }
+        if (`$ppt) { try { `$ppt.Quit() } catch {} ; try { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject(`$ppt) } catch {} }
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    }
+}
+
+if (`$result) {
+    [System.IO.File]::WriteAllText(`$outPath, `$result, [System.Text.Encoding]::UTF8)
+}
+"@
+
+    $helperPs1 = Join-Path $env:TEMP ('ORT_Helper_' + [guid]::NewGuid().ToString() + '.ps1')
+    try {
+        [System.IO.File]::WriteAllText($helperPs1, $helper, [System.Text.Encoding]::UTF8)
+        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File', $helperPs1) -WindowStyle Minimized -PassThru
+        $completed = $proc.WaitForExit($TimeoutSec * 1000)
+        if (-not $completed) {
+            try { $proc.Kill() } catch {}
+            return ''
+        }
+
+        if (Test-Path -LiteralPath $helperOut) {
+            try {
+                $txt = Get-Content -LiteralPath $helperOut -Raw -Encoding UTF8
+                return (($txt -replace '\s+', ' ').Trim())
+            }
+            catch { return '' }
+            finally { try { Remove-Item -LiteralPath $helperOut -Force -ErrorAction SilentlyContinue } catch {} }
+        }
+    }
+    catch {
+        return ''
+    }
+    finally {
+        if (Test-Path -LiteralPath $helperOut) { try { Remove-Item -LiteralPath $helperOut -Force -ErrorAction SilentlyContinue } catch {} }
+        if (Test-Path -LiteralPath $helperPs1) { try { Remove-Item -LiteralPath $helperPs1 -Force -ErrorAction SilentlyContinue } catch {} }
+    }
+
+    return ''
+}
+
+
+
+
+function Release-ComObjectSafe {
+    param($Object)
+    if ($null -ne $Object) {
+        try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($Object) } catch {}
+    }
+}
+
+
+function Get-OfficeConverterPaths {
+    $candidates = @(
+        'C:\Program Files (x86)\Microsoft Office\Office12',
+        'C:\Program Files\Microsoft Office\Office12'
+    )
+
+    foreach ($base in $candidates) {
+        if (Test-Path -LiteralPath $base) {
+            return @{
+                Word  = Join-Path $base 'wordconv.exe'
+                Excel = Join-Path $base 'excelcnv.exe'
+                PowerPoint = Join-Path $base 'ppcnvcom.exe'
+            }
+        }
+    }
+
+    return @{
+        Word  = ''
+        Excel = ''
+        PowerPoint = ''
+    }
+}
+
+function Convert-LegacyOfficeViaConverterToTemp {
+    param(
+        [string]$FilePath,
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType,
+        [int]$TimeoutSec = 45
+    )
+
+    $result = [ordered]@{
+        Success = $false
+        TempPath = ''
+        ConvertedType = ''
+        Status = 'Failed'
+        Error = ''
+        Method = 'Converter'
+    }
+
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        $result.Error = 'File not found'
+        return New-Object PSObject -Property $result
+    }
+
+    $conv = Get-OfficeConverterPaths
+    $exe = $conv[$AppType]
+    if ([string]::IsNullOrWhiteSpace($exe) -or -not (Test-Path -LiteralPath $exe)) {
+        $result.Status = 'ConverterNotFound'
+        $result.Error = 'Converter tool not found'
+        return New-Object PSObject -Property $result
+    }
+
+    $targetExt = ''
+    switch ($AppType) {
+        'Word' {
+            $targetExt = '.docx'
+            $result.ConvertedType = 'docx'
+        }
+        'Excel' {
+            $targetExt = '.xlsx'
+            $result.ConvertedType = 'xlsx'
+        }
+        'PowerPoint' {
+            $targetExt = '.pptx'
+            $result.ConvertedType = 'pptx'
+        }
+    }
+
+    $tempPath = Join-Path $env:TEMP ('ORT_CONVERT_' + [guid]::NewGuid().ToString() + $targetExt)
+    $stdoutPath = Join-Path $env:TEMP ('ORT_CONVERT_STDOUT_' + [guid]::NewGuid().ToString() + '.log')
+    $stderrPath = Join-Path $env:TEMP ('ORT_CONVERT_STDERR_' + [guid]::NewGuid().ToString() + '.log')
+
+    try {
+        $proc = Start-Process -FilePath $exe -ArgumentList @('-oice', '-nme', $FilePath, $tempPath) -WindowStyle Minimized -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $completed = $proc.WaitForExit($TimeoutSec * 1000)
+        if (-not $completed) {
+            try { $proc.Kill() } catch {}
+            $result.Status = 'Timeout'
+            $result.Error = 'Conversion timeout'
+            return New-Object PSObject -Property $result
+        }
+
+        if (Test-Path -LiteralPath $tempPath) {
+            $result.Success = $true
+            $result.TempPath = $tempPath
+            $result.Status = 'ConvertedByConverter'
+            return New-Object PSObject -Property $result
+        }
+
+        $errText = ''
+        try { if (Test-Path -LiteralPath $stderrPath) { $errText = (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue) } } catch {}
+        if ([string]::IsNullOrWhiteSpace($errText)) {
+            try { if (Test-Path -LiteralPath $stdoutPath) { $errText = (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue) } } catch {}
+        }
+        if ([string]::IsNullOrWhiteSpace($errText)) {
+            $errText = 'Converter produced no output file'
+        }
+
+        $result.Status = 'ConverterFailed'
+        $result.Error = ($errText -replace '\s+', ' ').Trim()
+    }
+    catch {
+        $result.Status = 'ConverterFailed'
+        $result.Error = $_.Exception.Message
+    }
+    finally {
+        if ((-not $script:LegacyKeepTempConverted) -and (-not $result.Success) -and (Test-Path -LiteralPath $tempPath)) {
+            try { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        if (Test-Path -LiteralPath $stdoutPath) { try { Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue } catch {} }
+        if (Test-Path -LiteralPath $stderrPath) { try { Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue } catch {} }
+    }
+
+    return New-Object PSObject -Property $result
+}
+
+function New-OfficeInteropApp {
+    param(
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType
+    )
+
+    try {
+        switch ($AppType) {
+            'Word' {
+                $word = New-Object -ComObject Word.Application
+                $word.Visible = $false
+                $word.DisplayAlerts = 0
+                return $word
+            }
+            'Excel' {
+                $excel = New-Object -ComObject Excel.Application
+                $excel.Visible = $false
+                $excel.DisplayAlerts = $false
+                try { $excel.ScreenUpdating = $false } catch {}
+                try { $excel.EnableEvents = $false } catch {}
+                return $excel
+            }
+            'PowerPoint' {
+                $ppt = New-Object -ComObject PowerPoint.Application
+                try { $ppt.Visible = 0 } catch {}
+                return $ppt
+            }
+        }
+    } catch {
+        return $null
+    }
+
+    return $null
+}
+
+function Ensure-OfficeInteropApp {
+    param(
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType
+    )
+
+    if (-not $script:OfficeInterop) {
+        $script:OfficeInterop = @{ Word = $null; Excel = $null; PowerPoint = $null; Initialized = $false }
+    }
+
+    $existing = $script:OfficeInterop[$AppType]
+    if ($existing) { return $existing }
+
+    $app = New-OfficeInteropApp -AppType $AppType
+    if (-not $app) {
+        Start-Sleep -Milliseconds 300
+        $app = New-OfficeInteropApp -AppType $AppType
+    }
+
+    $script:OfficeInterop[$AppType] = $app
+    $script:OfficeInterop.Initialized = $true
+    return $app
+}
+
+function Initialize-OfficeInterop {
+    # 預先暖機，但不把單一失敗視為整體失敗
+    [void](Ensure-OfficeInteropApp -AppType Word)
+    [void](Ensure-OfficeInteropApp -AppType Excel)
+    [void](Ensure-OfficeInteropApp -AppType PowerPoint)
+}
+
+function Close-OfficeInterop {
+    try {
+        if ($script:OfficeInterop.Word) {
+            try { $script:OfficeInterop.Word.Quit() } catch {}
+            Release-ComObjectSafe $script:OfficeInterop.Word
+        }
+    } catch {}
+    try {
+        if ($script:OfficeInterop.Excel) {
+            try { $script:OfficeInterop.Excel.Quit() } catch {}
+            Release-ComObjectSafe $script:OfficeInterop.Excel
+        }
+    } catch {}
+    try {
+        if ($script:OfficeInterop.PowerPoint) {
+            try { $script:OfficeInterop.PowerPoint.Quit() } catch {}
+            Release-ComObjectSafe $script:OfficeInterop.PowerPoint
+        }
+    } catch {}
+
+    $script:OfficeInterop.Word = $null
+    $script:OfficeInterop.Excel = $null
+    $script:OfficeInterop.PowerPoint = $null
+    $script:OfficeInterop.Initialized = $false
+
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}
+
+function Convert-LegacyOfficeViaHelperToTemp {
+    param(
+        [string]$FilePath,
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType,
+        [int]$TimeoutSec = 45
+    )
+
+    $result = [ordered]@{
+        Success = $false
+        TempPath = ''
+        ConvertedType = ''
+        Status = 'Failed'
+        Error = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        $result.Error = 'File not found'
+        return New-Object PSObject -Property $result
+    }
+
+    $targetExt = ''
+    $saveCode = ''
+    switch ($AppType) {
+        'Word' {
+            $targetExt = '.docx'
+            $result.ConvertedType = 'docx'
+        }
+        'Excel' {
+            $targetExt = '.xlsx'
+            $result.ConvertedType = 'xlsx'
+        }
+        'PowerPoint' {
+            $targetExt = '.pptx'
+            $result.ConvertedType = 'pptx'
+        }
+    }
+
+    $tempPath = Join-Path $env:TEMP ('ORT_CONVERT_' + [guid]::NewGuid().ToString() + $targetExt)
+    $helperOut = Join-Path $env:TEMP ('ORT_CONVERT_RESULT_' + [guid]::NewGuid().ToString() + '.json')
+
+    $helper = @"
+param(
+    [string]`$InputPath,
+    [string]`$OutputPath,
+    [string]`$ResultPath,
+    [string]`$AppType
+)
+
+`$res = [ordered]@{
+    Success = `$false
+    TempPath = `$OutputPath
+    ConvertedType = ''
+    Status = 'Failed'
+    Error = ''
+}
+
+try {
+    switch (`$AppType) {
+        'Word' {
+            `$res.ConvertedType = 'docx'
+            `$app = New-Object -ComObject Word.Application
+            `$app.Visible = `$false
+            `$app.DisplayAlerts = 0
+            `$doc = `$null
+            try {
+                `$doc = `$app.Documents.Open(`$InputPath, `$false, `$true)
+                try {
+                    `$doc.SaveAs2(`$OutputPath, 16)
+                } catch {
+                    `$doc.SaveAs([ref]`$OutputPath, [ref]16)
+                }
+            } finally {
+                if (`$doc) { try { `$doc.Close(0) } catch { try { `$doc.Close() } catch {} } ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$doc) } catch {} }
+                if (`$app) { try { `$app.Quit() } catch {} ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$app) } catch {} }
+            }
+        }
+        'Excel' {
+            `$res.ConvertedType = 'xlsx'
+            `$app = New-Object -ComObject Excel.Application
+            `$app.Visible = `$false
+            `$app.DisplayAlerts = `$false
+            try { `$app.ScreenUpdating = `$false } catch {}
+            try { `$app.EnableEvents = `$false } catch {}
+            `$wb = `$null
+            try {
+                `$wb = `$app.Workbooks.Open(`$InputPath, 0, `$true)
+                `$wb.SaveAs(`$OutputPath, 51)
+            } finally {
+                if (`$wb) { try { `$wb.Close(`$false) } catch { try { `$wb.Close() } catch {} } ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$wb) } catch {} }
+                if (`$app) { try { `$app.Quit() } catch {} ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$app) } catch {} }
+            }
+        }
+        'PowerPoint' {
+            `$res.ConvertedType = 'pptx'
+            `$app = New-Object -ComObject PowerPoint.Application
+            try { `$app.Visible = 0 } catch {}
+            `$pres = `$null
+            try {
+                `$pres = `$app.Presentations.Open(`$InputPath, `$false, `$true, `$false)
+                `$pres.SaveAs(`$OutputPath, 24)
+            } finally {
+                if (`$pres) { try { `$pres.Close() } catch {} ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$pres) } catch {} }
+                if (`$app) { try { `$app.Quit() } catch {} ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$app) } catch {} }
+            }
+        }
+    }
+
+    if (Test-Path -LiteralPath `$OutputPath) {
+        `$res.Success = `$true
+        `$res.Status = 'Converted'
+    } else {
+        `$res.Error = 'No conversion result'
+    }
+}
+catch {
+    `$res.Status = 'Failed'
+    `$res.Error = `$_.Exception.Message
+}
+
+try {
+    [System.IO.File]::WriteAllText(`$ResultPath, ((New-Object PSObject -Property `$res) | ConvertTo-Json -Depth 4), [System.Text.Encoding]::UTF8)
+} catch {}
+[GC]::Collect()
+[GC]::WaitForPendingFinalizers()
+"@
+
+    $helperPs1 = Join-Path $env:TEMP ('ORT_CONVERT_HELPER_' + [guid]::NewGuid().ToString() + '.ps1')
+    try {
+        [System.IO.File]::WriteAllText($helperPs1, $helper, [System.Text.Encoding]::UTF8)
+        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File', $helperPs1,
+            '-InputPath', $FilePath,
+            '-OutputPath', $tempPath,
+            '-ResultPath', $helperOut,
+            '-AppType', $AppType
+        ) -WindowStyle Minimized -PassThru
+
+        $completed = $proc.WaitForExit($TimeoutSec * 1000)
+        if (-not $completed) {
+            try { $proc.Kill() } catch {}
+            $result.Status = 'Timeout'
+            $result.Error = 'Conversion timeout'
+            return New-Object PSObject -Property $result
+        }
+
+        if (Test-Path -LiteralPath $helperOut) {
+            try {
+                $raw = Get-Content -LiteralPath $helperOut -Raw -Encoding UTF8
+                if ($raw) {
+                    $obj = $raw | ConvertFrom-Json
+                    if ($obj) {
+                        return $obj
+                    }
+                }
+            } catch {
+                $result.Error = $_.Exception.Message
+            }
+        } else {
+            $result.Error = 'No helper result'
+        }
+    }
+    catch {
+        $result.Error = $_.Exception.Message
+    }
+    finally {
+        if ((-not $script:LegacyKeepTempConverted) -and (-not $result.Success) -and (Test-Path -LiteralPath $tempPath)) {
+            try { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        if (Test-Path -LiteralPath $helperOut) { try { Remove-Item -LiteralPath $helperOut -Force -ErrorAction SilentlyContinue } catch {} }
+        if (Test-Path -LiteralPath $helperPs1) { try { Remove-Item -LiteralPath $helperPs1 -Force -ErrorAction SilentlyContinue } catch {} }
+    }
+
+    return New-Object PSObject -Property $result
+}
+
+function Convert-LegacyOfficeToOpenXmlTemp {
+    param(
+        [string]$FilePath,
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType,
+        [int]$TimeoutSec = 45
+    )
+
+    $result = [ordered]@{
+        Success = $false
+        TempPath = ''
+        ConvertedType = ''
+        Status = 'Failed'
+        Error = ''
+        Method = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        $result.Error = 'File not found'
+        return New-Object PSObject -Property $result
+    }
+
+    switch ($AppType) {
+        'Word' { $result.ConvertedType = 'docx' }
+        'Excel' { $result.ConvertedType = 'xlsx' }
+        'PowerPoint' { $result.ConvertedType = 'pptx' }
+    }
+
+    # 優先使用 Office 2007 相容性套件 Converter
+    $converterResult = Convert-LegacyOfficeViaConverterToTemp -FilePath $FilePath -AppType $AppType -TimeoutSec $TimeoutSec
+    if ($converterResult -and $converterResult.Success) {
+        return $converterResult
+    }
+
+    # Converter 找不到或失敗時，再退回共用 COM
+    $app = Ensure-OfficeInteropApp -AppType $AppType
+    if (-not $app) {
+        $helperResult = Convert-LegacyOfficeViaHelperToTemp -FilePath $FilePath -AppType $AppType -TimeoutSec $TimeoutSec
+        if ($helperResult) {
+            if (-not $helperResult.Success -and $converterResult -and -not [string]::IsNullOrWhiteSpace($converterResult.Error)) {
+                $helperResult.Error = (($converterResult.Error + ' / ' + [string]$helperResult.Error).Trim(' ','/'))
+            }
+            if (-not $helperResult.Status -or $helperResult.Status -eq 'Failed') {
+                if ($converterResult -and $converterResult.Status) {
+                    $helperResult.Status = [string]$converterResult.Status
+                }
+            }
+            return $helperResult
+        }
+        return $converterResult
+    }
+
+    $targetExt = '.' + $result.ConvertedType
+    $tempPath = Join-Path $env:TEMP ('ORT_CONVERT_' + [guid]::NewGuid().ToString() + $targetExt)
+    $doc = $null
+    $wb = $null
+    $pres = $null
+
+    try {
+        switch ($AppType) {
+            'Word' {
+                $doc = $app.Documents.Open($FilePath, $false, $true)
+                try { $doc.SaveAs2($tempPath, 16) } catch { $doc.SaveAs([ref]$tempPath, [ref]16) }
+                $result.Success = (Test-Path -LiteralPath $tempPath)
+            }
+            'Excel' {
+                $wb = $app.Workbooks.Open($FilePath, 0, $true)
+                $wb.SaveAs($tempPath, 51)
+                $result.Success = (Test-Path -LiteralPath $tempPath)
+            }
+            'PowerPoint' {
+                $pres = $app.Presentations.Open($FilePath, $false, $true, $false)
+                $pres.SaveAs($tempPath, 24)
+                $result.Success = (Test-Path -LiteralPath $tempPath)
+            }
+        }
+
+        if ($result.Success) {
+            $result.TempPath = $tempPath
+            $result.Status = 'ConvertedByCom'
+            $result.Method = 'COM'
+        } else {
+            $result.Status = if ($converterResult -and $converterResult.Status) { [string]$converterResult.Status } else { 'Failed' }
+            $result.Error = if ($converterResult -and $converterResult.Error) { [string]$converterResult.Error } else { 'No conversion result' }
+        }
+    } catch {
+        try {
+            if ($doc) { try { $doc.Close(0) } catch { try { $doc.Close() } catch {} } ; Release-ComObjectSafe $doc ; $doc = $null }
+            if ($wb)  { try { $wb.Close($false) } catch { try { $wb.Close() } catch {} } ; Release-ComObjectSafe $wb ; $wb = $null }
+            if ($pres){ try { $pres.Close() } catch {} ; Release-ComObjectSafe $pres ; $pres = $null }
+        } catch {}
+
+        try {
+            if ($script:OfficeInterop[$AppType]) {
+                try { $script:OfficeInterop[$AppType].Quit() } catch {}
+                Release-ComObjectSafe $script:OfficeInterop[$AppType]
+                $script:OfficeInterop[$AppType] = $null
+            }
+        } catch {}
+
+        $helperResult = Convert-LegacyOfficeViaHelperToTemp -FilePath $FilePath -AppType $AppType -TimeoutSec $TimeoutSec
+        if ($helperResult) {
+            if ($helperResult.Success) {
+                try { $helperResult | Add-Member -NotePropertyName Method -NotePropertyValue 'COM Helper' -Force } catch {}
+            } elseif ($converterResult -and -not [string]::IsNullOrWhiteSpace($converterResult.Error)) {
+                $helperResult.Error = (($converterResult.Error + ' / ' + [string]$helperResult.Error).Trim(' ','/'))
+            }
+            return $helperResult
+        }
+
+        if ($converterResult) { return $converterResult }
+        $result.Error = $_.Exception.Message
+    } finally {
+        if ($doc) {
+            try { $doc.Close(0) } catch { try { $doc.Close() } catch {} }
+            Release-ComObjectSafe $doc
+        }
+        if ($wb) {
+            try { $wb.Close($false) } catch { try { $wb.Close() } catch {} }
+            Release-ComObjectSafe $wb
+        }
+        if ($pres) {
+            try { $pres.Close() } catch {}
+            Release-ComObjectSafe $pres
+        }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+    }
+
+    return New-Object PSObject -Property $result
+}
+function Toggle-LegacyConversionMode {
+    $script:LegacyConversionMode = -not [bool]$script:LegacyConversionMode
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary ((T 'Legacy 轉新版已切換為' 'Legacy conversion switched to') + ': ' + $script:LegacyConversionMode)
+    Reset-UiCachesSafe
+}
+
+function Get-NamingConfidence {
+    param(
+        [string]$ContentSource,
+        [string]$PreviewText
+    )
+
+    $len = 0
+    if ($PreviewText) { $len = $PreviewText.Length }
+
+    if ($ContentSource -eq 'Converted OpenXML' -or $ContentSource -eq 'OpenXML') {
+        if ($len -ge 20) { return 'High' }
+        return 'Medium'
+    }
+    if ($ContentSource -eq 'PDF text' -or $ContentSource -eq 'RTF text' -or $ContentSource -eq 'Legacy text') {
+        if ($len -ge 20) { return 'Medium' }
+        return 'Low'
+    }
+    if ($ContentSource -eq 'FileHash only' -or $ContentSource -eq 'Metadata' -or [string]::IsNullOrWhiteSpace($ContentSource)) {
+        return 'Low'
+    }
+    return 'Medium'
+}
+
+function Get-LegacyReadableText {
+    param(
+        [string]$FilePath,
+        [int]$MaxReadKB = 512
+    )
+
+    if (-not (Test-Path -LiteralPath $FilePath)) { return '' }
+
+    try {
+        $fs = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $maxBytes = $MaxReadKB * 1KB
+            $readBytes = [Math]::Min([int64]$fs.Length, [int64]$maxBytes)
+            if ($readBytes -le 0) { return '' }
+            $buffer = New-Object byte[] $readBytes
+            [void]$fs.Read($buffer, 0, $readBytes)
+            $texts = @()
+            $encodings = @([Text.Encoding]::Unicode,[Text.Encoding]::BigEndianUnicode,[Text.Encoding]::ASCII,[Text.Encoding]::GetEncoding(950))
+            foreach ($enc in $encodings) {
+                try {
+                    $txt = $enc.GetString($buffer)
+                    if ($txt) {
+                        $txt = [Regex]::Replace($txt, '[--]', ' ')
+                        $txt = [Regex]::Replace($txt, '\?{3,}', ' ')
+                        $txt = [Regex]::Replace($txt, '\s+', ' ').Trim()
+                        $matches = [regex]::Matches($txt, '[一-鿿A-Za-z0-9][一-鿿A-Za-z0-9\-\_\(\)\/\.\,\:\s]{5,}')
+                        foreach ($m in $matches) { $texts += $m.Value }
+                    }
+                }
+                catch {}
+            }
+            $texts = $texts | Where-Object { $_ -and $_.Trim().Length -ge 6 } | Select-Object -Unique
+            return (($texts -join ' ') -replace '\s+', ' ').Trim()
+        }
+        finally { $fs.Close() }
+    }
+    catch { return '' }
+}
+
 function Get-OfficeContentInfo {
     param([string]$FilePath)
 
@@ -604,6 +1786,11 @@ function Get-OfficeContentInfo {
         PreviewText = ''
         ParseStatus = T '解析失敗' 'Parse failed'
         ParseReason = ''
+        ContentSource = ''
+        NamingConfidence = 'Low'
+        LegacyConverted = $false
+        ConvertedType = ''
+        ConversionStatus = ''
     }
 
     try {
@@ -616,6 +1803,7 @@ function Get-OfficeContentInfo {
                         $result.ContentHash = Get-TextHash $plain
                         $result.PreviewText = $plain.Substring(0, [Math]::Min(200, $plain.Length))
                         $result.ParseStatus = T '解析成功' 'Parsed'
+                        $result.ContentSource = 'OpenXML'
                     }
                     else {
                         $result.ParseStatus = T '無法取得內容' 'No content extracted'
@@ -623,72 +1811,45 @@ function Get-OfficeContentInfo {
                 }
                 else {
                     $result.ParseStatus = T '無法取得內容' 'No content extracted'
-                    $result.ParseReason = 'word/document.xml'
+                    $result.ParseReason = ''
                 }
             }
 
             '.xlsx' {
                 Add-Type -AssemblyName System.IO.Compression.FileSystem
-
                 $zip = $null
                 $parts = @()
-
                 try {
                     $zip = [System.IO.Compression.ZipFile]::OpenRead($FilePath)
-
                     $sharedEntry = $zip.Entries | Where-Object { $_.FullName -ieq 'xl/sharedStrings.xml' } | Select-Object -First 1
                     if ($sharedEntry) {
                         $sr = New-Object IO.StreamReader($sharedEntry.Open(), [Text.Encoding]::UTF8)
-                        try {
-                            $sharedXml = $sr.ReadToEnd()
-                            if (-not [string]::IsNullOrWhiteSpace($sharedXml)) {
-                                $parts += $sharedXml
-                            }
-                        }
-                        finally {
-                            $sr.Close()
-                        }
+                        try { $parts += $sr.ReadToEnd() } finally { $sr.Close() }
                     }
-
-                    $sheetEntries = $zip.Entries |
-                        Where-Object { $_.FullName -match '^xl/worksheets/sheet\d+\.xml$' } |
-                        Sort-Object FullName
-
+                    $sheetEntries = $zip.Entries | Where-Object { $_.FullName -match '^xl/worksheets/sheet\d+\.xml$' } | Sort-Object FullName
                     foreach ($sheetEntry in $sheetEntries) {
                         $sr2 = New-Object IO.StreamReader($sheetEntry.Open(), [Text.Encoding]::UTF8)
                         try {
                             $sheetXml = $sr2.ReadToEnd()
-                            if (-not [string]::IsNullOrWhiteSpace($sheetXml)) {
-                                $parts += $sheetXml
-                            }
-                        }
-                        finally {
-                            $sr2.Close()
-                        }
+                            if (-not [string]::IsNullOrWhiteSpace($sheetXml)) { $parts += $sheetXml }
+                        } finally { $sr2.Close() }
                     }
-
                     $workbookEntry = $zip.Entries | Where-Object { $_.FullName -ieq 'xl/workbook.xml' } | Select-Object -First 1
                     if ($workbookEntry) {
                         $sr3 = New-Object IO.StreamReader($workbookEntry.Open(), [Text.Encoding]::UTF8)
                         try {
                             $workbookXml = $sr3.ReadToEnd()
-                            if (-not [string]::IsNullOrWhiteSpace($workbookXml)) {
-                                $parts += $workbookXml
-                            }
-                        }
-                        finally {
-                            $sr3.Close()
-                        }
+                            if (-not [string]::IsNullOrWhiteSpace($workbookXml)) { $parts += $workbookXml }
+                        } finally { $sr3.Close() }
                     }
-
                     $combined = ($parts -join ' ')
-
                     if (-not [string]::IsNullOrWhiteSpace($combined)) {
                         $plain = Normalize-XmlText $combined
                         if (-not [string]::IsNullOrWhiteSpace($plain)) {
                             $result.ContentHash = Get-TextHash $plain
                             $result.PreviewText = $plain.Substring(0, [Math]::Min(200, $plain.Length))
                             $result.ParseStatus = T '解析成功' 'Parsed'
+                            $result.ContentSource = 'OpenXML'
                         }
                         else {
                             $result.ParseStatus = T '無法取得內容' 'No content extracted'
@@ -696,7 +1857,7 @@ function Get-OfficeContentInfo {
                     }
                     else {
                         $result.ParseStatus = T '無法取得內容' 'No content extracted'
-                        $result.ParseReason = 'xl/sharedStrings.xml + xl/worksheets/sheet*.xml + xl/workbook.xml'
+                        $result.ParseReason = ''
                     }
                 }
                 catch {
@@ -709,51 +1870,213 @@ function Get-OfficeContentInfo {
             }
 
             '.pptx' {
-                $xml = Get-ZipEntryText -ZipPath $FilePath -Candidates @('ppt/slides/slide1.xml')
-                if ($xml) {
-                    $plain = Normalize-XmlText $xml
-                    if ($plain) {
-                        $result.ContentHash = Get-TextHash $plain
-                        $result.PreviewText = $plain.Substring(0, [Math]::Min(200, $plain.Length))
-                        $result.ParseStatus = T '解析成功' 'Parsed'
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                $zip = $null
+                $parts = @()
+                try {
+                    $zip = [System.IO.Compression.ZipFile]::OpenRead($FilePath)
+                    $slideEntries = $zip.Entries | Where-Object { $_.FullName -match '^ppt/slides/slide\d+\.xml$' } | Sort-Object FullName
+                    foreach ($entry in $slideEntries) {
+                        $sr = New-Object IO.StreamReader($entry.Open(), [Text.Encoding]::UTF8)
+                        try {
+                            $slideXml = $sr.ReadToEnd()
+                            if ($slideXml) { $parts += $slideXml }
+                        } finally { $sr.Close() }
+                    }
+                    $combined = ($parts -join ' ')
+                    if ($combined) {
+                        $plain = Normalize-XmlText $combined
+                        if ($plain) {
+                            $result.ContentHash = Get-TextHash $plain
+                            $result.PreviewText = $plain.Substring(0, [Math]::Min(200, $plain.Length))
+                            $result.ParseStatus = T '解析成功' 'Parsed'
+                            $result.ContentSource = 'OpenXML'
+                        }
+                        else {
+                            $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                        }
                     }
                     else {
                         $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                        $result.ParseReason = ''
                     }
                 }
-                else {
-                    $result.ParseStatus = T '無法取得內容' 'No content extracted'
-                    $result.ParseReason = 'ppt/slides/slide1.xml'
+                catch {
+                    $result.ParseStatus = T '解析失敗' 'Parse failed'
+                    $result.ParseReason = $_.Exception.Message
+                }
+                finally {
+                    if ($zip) { $zip.Dispose() }
                 }
             }
 
             '.doc' {
-                $bytes = [IO.File]::ReadAllBytes($FilePath)
-                $text = [Text.Encoding]::ASCII.GetString($bytes)
-                $text = [Regex]::Replace($text, '[^\u0020-\u007E\u4E00-\u9FFF\r\n\t]', ' ')
-                $text = [Regex]::Replace($text, '\s+', ' ').Trim()
-                if ($text) {
-                    $result.ContentHash = Get-TextHash $text
-                    $result.PreviewText = $text.Substring(0, [Math]::Min(200, $text.Length))
-                    $result.ParseStatus = T '解析成功' 'Parsed'
+                $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
+                $canTryOffice = $fileInfo -and ($fileInfo.Length -le ($script:LegacyOfficeMaxFileMB * 1MB))
+                if ($script:LegacyConversionMode -and $canTryOffice) {
+                    $conv = Convert-LegacyOfficeToOpenXmlTemp -FilePath $FilePath -AppType Word -TimeoutSec $script:LegacyOfficeTimeoutSec
+                    if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
+                        try {
+                            $tmpInfo = Get-OfficeContentInfo -FilePath $conv.TempPath
+                            $result.ContentHash = $tmpInfo.ContentHash
+                            $result.PreviewText = $tmpInfo.PreviewText
+                            $result.ParseStatus = $tmpInfo.ParseStatus
+                            $result.ParseReason = $tmpInfo.ParseReason
+                            $result.ContentSource = 'Converted OpenXML'
+                            $result.LegacyConverted = $true
+                            $result.ConvertedType = 'docx'
+                            $result.ConversionStatus = 'Success'
+                        } finally {
+                            if (-not $script:LegacyKeepTempConverted) { try { Remove-Item -LiteralPath $conv.TempPath -Force -ErrorAction SilentlyContinue } catch {} }
+                        }
+                    } else {
+                        $result.ConversionStatus = if ($conv) { [string]$conv.Status } else { 'Failed' }
+                        if ($conv -and $conv.Error) { $result.ParseReason = [string]$conv.Error }
+                    }
                 }
-                else {
-                    $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                if (-not $result.ContentHash) {
+                    $maxRead = if ($script:LegacyQuickMode) { [Math]::Min($script:LegacyMaxReadKB, 128) } else { $script:LegacyMaxReadKB }
+                    $text = Get-LegacyReadableText -FilePath $FilePath -MaxReadKB $maxRead
+                    if ((-not (Test-LegacyTextLooksUseful $text)) -and $script:LegacyOfficeFallback -and $canTryOffice) {
+                        $officeText = Get-LegacyOfficeTextViaHelper -FilePath $FilePath -AppType Word -TimeoutSec $script:LegacyOfficeTimeoutSec -MaxChars ($script:LegacyTextPreviewLength * 10)
+                        if (Test-LegacyTextLooksUseful $officeText) { $text = $officeText }
+                    }
+                    if ($text) {
+                        $result.ContentHash = Get-TextHash $text
+                        $result.PreviewText = $text.Substring(0, [Math]::Min($script:LegacyTextPreviewLength, $text.Length))
+                        $result.ParseStatus = T '解析成功' 'Parsed'
+                        $result.ParseReason = ''
+                        if (-not $result.ContentSource) { $result.ContentSource = 'Legacy text' }
+                    }
+                    elseif (-not $result.ParseStatus -or $result.ParseStatus -eq (T '解析失敗' 'Parse failed')) {
+                        $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                    }
                 }
             }
 
             '.xls' {
-                $bytes = [IO.File]::ReadAllBytes($FilePath)
-                $text = [Text.Encoding]::ASCII.GetString($bytes)
-                $text = [Regex]::Replace($text, '[^\u0020-\u007E\u4E00-\u9FFF\r\n\t]', ' ')
-                $text = [Regex]::Replace($text, '\s+', ' ').Trim()
-                if ($text) {
-                    $result.ContentHash = Get-TextHash $text
-                    $result.PreviewText = $text.Substring(0, [Math]::Min(200, $text.Length))
+                $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
+                $canTryOffice = $fileInfo -and ($fileInfo.Length -le ($script:LegacyOfficeMaxFileMB * 1MB))
+                if ($script:LegacyConversionMode -and $canTryOffice) {
+                    $conv = Convert-LegacyOfficeToOpenXmlTemp -FilePath $FilePath -AppType Excel -TimeoutSec $script:LegacyOfficeTimeoutSec
+                    if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
+                        try {
+                            $tmpInfo = Get-OfficeContentInfo -FilePath $conv.TempPath
+                            $result.ContentHash = $tmpInfo.ContentHash
+                            $result.PreviewText = $tmpInfo.PreviewText
+                            $result.ParseStatus = $tmpInfo.ParseStatus
+                            $result.ParseReason = $tmpInfo.ParseReason
+                            $result.ContentSource = 'Converted OpenXML'
+                            $result.LegacyConverted = $true
+                            $result.ConvertedType = 'xlsx'
+                            $result.ConversionStatus = 'Success'
+                        } finally {
+                            if (-not $script:LegacyKeepTempConverted) { try { Remove-Item -LiteralPath $conv.TempPath -Force -ErrorAction SilentlyContinue } catch {} }
+                        }
+                    } else {
+                        $result.ConversionStatus = if ($conv) { [string]$conv.Status } else { 'Failed' }
+                        if ($conv -and $conv.Error) { $result.ParseReason = [string]$conv.Error }
+                    }
+                }
+                if (-not $result.ContentHash) {
+                    $maxRead = if ($script:LegacyQuickMode) { [Math]::Min($script:LegacyMaxReadKB, 128) } else { $script:LegacyMaxReadKB }
+                    $excelText = Get-LegacyReadableText -FilePath $FilePath -MaxReadKB $maxRead
+                    if ((-not (Test-LegacyTextLooksUseful $excelText)) -and $script:LegacyOfficeFallback -and $canTryOffice) {
+                        $officeText = Get-LegacyOfficeTextViaHelper -FilePath $FilePath -AppType Excel -TimeoutSec $script:LegacyOfficeTimeoutSec -MaxChars ($script:LegacyTextPreviewLength * 12)
+                        if (Test-LegacyTextLooksUseful $officeText) { $excelText = $officeText }
+                    }
+                    if ($excelText) {
+                        $result.ContentHash = Get-TextHash $excelText
+                        $result.PreviewText = $excelText.Substring(0, [Math]::Min($script:LegacyTextPreviewLength, $excelText.Length))
+                        $result.ParseStatus = T '解析成功' 'Parsed'
+                        $result.ParseReason = ''
+                        if (-not $result.ContentSource) { $result.ContentSource = 'Legacy text' }
+                    }
+                    elseif (-not $result.ParseStatus -or $result.ParseStatus -eq (T '解析失敗' 'Parse failed')) {
+                        $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                    }
+                }
+            }
+
+            '.ppt' {
+                $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
+                $canTryOffice = $fileInfo -and ($fileInfo.Length -le ($script:LegacyOfficeMaxFileMB * 1MB))
+                if ($script:LegacyConversionMode -and $canTryOffice) {
+                    $conv = Convert-LegacyOfficeToOpenXmlTemp -FilePath $FilePath -AppType PowerPoint -TimeoutSec ([Math]::Max($script:LegacyOfficeTimeoutSec, 15))
+                    if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
+                        try {
+                            $tmpInfo = Get-OfficeContentInfo -FilePath $conv.TempPath
+                            $result.ContentHash = $tmpInfo.ContentHash
+                            $result.PreviewText = $tmpInfo.PreviewText
+                            $result.ParseStatus = $tmpInfo.ParseStatus
+                            $result.ParseReason = $tmpInfo.ParseReason
+                            $result.ContentSource = 'Converted OpenXML'
+                            $result.LegacyConverted = $true
+                            $result.ConvertedType = 'pptx'
+                            $result.ConversionStatus = 'Success'
+                        } finally {
+                            if (-not $script:LegacyKeepTempConverted) { try { Remove-Item -LiteralPath $conv.TempPath -Force -ErrorAction SilentlyContinue } catch {} }
+                        }
+                    } else {
+                        $result.ConversionStatus = if ($conv) { [string]$conv.Status } else { 'Failed' }
+                        if ($conv -and $conv.Error) { $result.ParseReason = [string]$conv.Error }
+                    }
+                }
+                if (-not $result.ContentHash) {
+                    $legacyText = Get-LegacyReadableText -FilePath $FilePath -MaxReadKB ([Math]::Min($script:LegacyMaxReadKB, 256))
+                    if ((-not (Test-LegacyTextLooksUseful $legacyText)) -and $script:LegacyOfficeFallback -and $canTryOffice) {
+                        $officeText = Get-LegacyOfficeTextViaHelper -FilePath $FilePath -AppType PowerPoint -TimeoutSec ([Math]::Max($script:LegacyOfficeTimeoutSec, 15)) -MaxChars ($script:LegacyTextPreviewLength * 12)
+                        if (Test-LegacyTextLooksUseful $officeText) { $legacyText = $officeText }
+                    }
+                    if ($legacyText) {
+                        $result.ContentHash = Get-TextHash $legacyText
+                        $result.PreviewText = $legacyText.Substring(0, [Math]::Min($script:LegacyTextPreviewLength, $legacyText.Length))
+                        $result.ParseStatus = T '解析成功' 'Parsed'
+                        $result.ParseReason = ''
+                        if (-not $result.ContentSource) { $result.ContentSource = 'Legacy text' }
+                    }
+                    elseif (-not $result.ParseStatus -or $result.ParseStatus -eq (T '解析失敗' 'Parse failed')) {
+                        $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                    }
+                }
+            }
+
+            '.rtf' {
+                $rtfText = Get-RtfTextBestEffort -FilePath $FilePath
+                if ($rtfText) {
+                    $result.ContentHash = Get-TextHash $rtfText
+                    $result.PreviewText = $rtfText.Substring(0, [Math]::Min(200, $rtfText.Length))
                     $result.ParseStatus = T '解析成功' 'Parsed'
+                    $result.ParseReason = ''
+                    $result.ContentSource = 'RTF text'
                 }
                 else {
                     $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                    $result.ParseReason = 'RTF'
+                }
+            }
+
+            '.pdf' {
+                $pdfText = Get-PdfTextBestEffort -FilePath $FilePath -MaxChars ([Math]::Max(($script:LegacyTextPreviewLength * 20), 4000))
+                $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
+                $canTryOffice = $script:LegacyOfficeFallback -and $fileInfo -and ($fileInfo.Length -le ($script:LegacyOfficeMaxFileMB * 1MB))
+                if ((-not (Test-LegacyTextLooksUseful $pdfText)) -and $canTryOffice) {
+                    $officeText = Get-LegacyOfficeTextViaHelper -FilePath $FilePath -AppType Word -TimeoutSec $script:LegacyOfficeTimeoutSec -MaxChars ($script:LegacyTextPreviewLength * 20)
+                    if (Test-LegacyTextLooksUseful $officeText) { $pdfText = $officeText }
+                }
+                if ($pdfText) {
+                    $result.ContentHash = Get-TextHash $pdfText
+                    $result.PreviewText = $pdfText.Substring(0, [Math]::Min(200, $pdfText.Length))
+                    $result.ParseStatus = T '解析成功' 'Parsed'
+                    $result.ParseReason = 'PDF text'
+                    $result.ContentSource = 'PDF text'
+                }
+                else {
+                    try { $result.ContentHash = (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash } catch { $result.ContentHash = '' }
+                    $result.PreviewText = ''
+                    $result.ParseStatus = T '僅檔案層級' 'File-level only'
+                    $result.ParseReason = T 'PDF 無法抽出文字，改用檔案雜湊' 'PDF text could not be extracted; fell back to file hash'
+                    $result.ContentSource = 'FileHash only'
                 }
             }
 
@@ -768,6 +2091,7 @@ function Get-OfficeContentInfo {
         $result.ParseReason = $_.Exception.Message
     }
 
+    $result.NamingConfidence = Get-NamingConfidence -ContentSource $result.ContentSource -PreviewText $result.PreviewText
     return New-Object PSObject -Property $result
 }
 
@@ -780,6 +2104,9 @@ function Get-ExtensionLabel {
         '.pptx' { return (T 'PowerPoint 簡報' 'PowerPoint Presentation') }
         '.doc'  { return (T 'Word 舊版文件' 'Legacy Word Document') }
         '.xls'  { return (T 'Excel 舊版活頁簿' 'Legacy Excel Workbook') }
+        '.ppt'  { return (T 'PowerPoint 舊版簡報' 'Legacy PowerPoint Presentation') }
+        '.rtf'  { return (T 'RTF 文件' 'RTF Document') }
+        '.pdf'  { return (T 'PDF 文件' 'PDF Document') }
         default { return (T '未知' 'Unknown') }
     }
 }
@@ -919,8 +2246,8 @@ function Get-SuggestedBaseName {
 
     $name = $text
     $name = $name -replace '\s+', ' '
-    $name = $name -replace '^[\-\_\.\s]+', ''
-    $name = $name -replace '[\-\_\.\s]+$', ''
+    $name = $name -replace '^[._\s-]+', ''
+    $name = $name -replace '[._\s-]+$', ''
     $name = $name -replace 'sheet\d+', ''
     $name = $name -replace '工作表\d+', ''
     $name = $name -replace '^[0-9\s]+$', ''
@@ -971,7 +2298,17 @@ function Test-IsRecoveredGenericName {
 
     if ([string]::IsNullOrWhiteSpace($FileName)) { return $false }
 
-    if ($FileName -match '^(file|doc|xls|ppt|recovered|found|chk)[-_]?\d+(\.[^.]+)?$') {
+    $base = [IO.Path]::GetFileNameWithoutExtension($FileName)
+
+    if ($FileName -match '^(file|doc|xls|ppt|recovered|found|chk|image|data|scan|dump|tmp)[-_]?\d+(\.[^.]+)?$') {
+        return $true
+    }
+
+    if ($base -match '^[A-Za-z]{1,4}\d{3,}$') {
+        return $true
+    }
+
+    if ($base -match '^\d{4,}$') {
         return $true
     }
 
@@ -1060,6 +2397,8 @@ function Get-RenamePlan {
 # -----------------------------
 function Start-Scan {
     Clear-Host
+    Write-Host (T '掃描處理中，請稍後...' 'Scan is in progress, please wait...') -ForegroundColor Cyan
+	Write-Host ""
     Ensure-Folder $script:OutputRoot
 
     if ([string]::IsNullOrWhiteSpace($script:ScanRoot)) {
@@ -1097,7 +2436,7 @@ function Start-Scan {
     Update-Status -Status (T '掃描中' 'Scanning') -Summary (T '開始掃描' 'Starting scan')
 
     $files = @()
-    $exts = @('*.docx','*.xlsx','*.pptx','*.doc','*.xls')
+    $exts = @('*.docx','*.xlsx','*.pptx','*.doc','*.xls','*.ppt','*.rtf','*.pdf')
 
     foreach ($e in $exts) {
         try {
@@ -1124,7 +2463,12 @@ function Start-Scan {
     $rows = @()
     $total = $files.Count
 
-    for ($i = 0; $i -lt $total; $i++) {
+    if ($script:LegacyConversionMode) {
+        Initialize-OfficeInterop
+    }
+
+    try {
+        for ($i = 0; $i -lt $total; $i++) {
         $f = $files[$i]
         Show-ProgressLine -Current ($i + 1) -Total $total -FileName $f.Name
 
@@ -1149,6 +2493,11 @@ function Start-Scan {
             PreviewText   = $contentInfo.PreviewText
             ParseStatus   = $contentInfo.ParseStatus
             ParseReason   = $contentInfo.ParseReason
+            ContentSource = $contentInfo.ContentSource
+            NamingConfidence = $contentInfo.NamingConfidence
+            LegacyConverted = $contentInfo.LegacyConverted
+            ConvertedType = $contentInfo.ConvertedType
+            ConversionStatus = $contentInfo.ConversionStatus
             LogicalGroup  = ''
             DuplicateType = ''
             Role          = ''
@@ -1157,6 +2506,12 @@ function Start-Scan {
         })
 
         $rows += $row
+    }
+    }
+    finally {
+        if ($script:LegacyConversionMode) {
+            Close-OfficeInterop
+        }
     }
 
     Write-Progress -Activity (T '掃描中' 'Scanning') -Completed
@@ -1167,12 +2522,13 @@ function Start-Scan {
 
     $csvPath = Join-Path $script:OutputRoot ('OfficeRecovery_{0}.csv' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     $rows | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+    $script:LastCsvReport = $csvPath
 
     $dupFileGroups = (@($rows | Group-Object FileHash | Where-Object { $_.Name -and $_.Count -gt 1 })).Count
     $dupContGroups = (@($rows | Group-Object ContentHash | Where-Object { $_.Name -and $_.Count -gt 1 })).Count
     $failCount = (@($rows | Where-Object { $_.ParseStatus -eq (T '解析失敗' 'Parse failed') })).Count
 
-    Update-Status -Status (T '完成' 'Done') -Summary ("CSV: $csvPath")
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary ("CSV: $csvPath")
 
     Write-Host ''
     Write-Host (T '掃描完成。' 'Scan completed.') -ForegroundColor Green
@@ -1189,15 +2545,25 @@ function Start-Scan {
 # -----------------------------
 function Export-HTML {
     Clear-Host
+    Write-Host (T 'HTML 報表處理中，請稍後...' 'Generating HTML report, please wait...') -ForegroundColor Cyan
+	Write-Host ""
+    Save-StateAndStatus -Status (T '處理中' 'Processing') -Summary (T '正在輸出 HTML' 'Generating HTML')
 
-    if (-not $script:Results -or @($script:Results).Count -eq 0) {
-        Write-Host (T '尚未有掃描結果。' 'No scan results yet.') -ForegroundColor Yellow
-        Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未掃描' 'No scan results')
-        Wait-Return
-        return
-    }
+    try {
+        if (-not $script:Results -or @($script:Results).Count -eq 0) {
+            Restore-ResultsFromLastCsv
+        }
+
+        if (-not $script:Results -or @($script:Results).Count -eq 0) {
+            Write-Host (T '尚未有掃描結果。' 'No scan results yet.') -ForegroundColor Yellow
+            Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未掃描' 'No scan results')
+            Wait-Return
+            return
+        }
 
     Ensure-Folder $script:OutputRoot
+
+    Update-Status -Status (T '處理中' 'Processing') -Summary (T 'HTML 報表處理中，請稍後...' 'Generating HTML report, please wait...')
 
     $htmlPath = Join-Path $script:OutputRoot ('OfficeRecovery_{0}.html' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
 
@@ -1267,12 +2633,15 @@ function Export-HTML {
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ParseStatus) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.DuplicateType) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $roleDisplay) + '</td>')
+        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ContentSource) + '</td>')
+        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.NamingConfidence) + '</td>')
         [void]$detailRows.AppendLine('<td style="text-align:right">' + (Get-SafeHtml ([string](Get-FileQualityScore $r))) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.LogicalGroup) + '</td>')
         [void]$detailRows.AppendLine('<td style="font-family:Consolas,monospace;word-break:break-all">' + (Get-SafeHtml $r.FileHash) + '</td>')
         [void]$detailRows.AppendLine('<td style="font-family:Consolas,monospace;word-break:break-all">' + (Get-SafeHtml $r.ContentHash) + '</td>')
-        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.PreviewText) + '</td>')
-        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ParseReason) + '</td>')
+        [void]$detailRows.AppendLine('<td class="preview-cell">' + (Get-SafeHtml $r.PreviewText) + '</td>')
+        $reasonDisplay = Get-FriendlyParseReason -Reason $r.ParseReason -ConversionStatus $r.ConversionStatus
+        [void]$detailRows.AppendLine('<td class="reason-cell">' + (Get-SafeHtml $reasonDisplay) + '</td>')
         [void]$detailRows.AppendLine('</tr>')
     }
 
@@ -1314,6 +2683,8 @@ function Export-HTML {
     $thStatus        = New-ThLabelHtml -Zh '狀態'       -En 'Status'
     $thDupType       = New-ThLabelHtml -Zh '重複判定'   -En 'Duplicate Type'
     $thRole          = New-ThLabelHtml -Zh '角色'       -En 'Role'
+    $thSource        = New-ThLabelHtml -Zh '內容來源'   -En 'Content Source'
+    $thConfidence    = New-ThLabelHtml -Zh '命名信心'   -En 'Naming Confidence'
     $thQuality       = New-ThLabelHtml -Zh '品質分數'   -En 'Quality Score'
     $thGroup         = New-ThLabelHtml -Zh '群組'       -En 'Group'
     $thFileHash      = New-ThLabelHtml -Zh '檔案雜湊'   -En 'File Hash'
@@ -1357,17 +2728,17 @@ h1{margin:0 0 10px 0;font-size:30px}
     margin-top:10px;
     color:#0f172a;
 }
-.panel{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:18px;margin-bottom:20px}
-table{width:100%;border-collapse:collapse}
-th,td{border:1px solid #dbe4f0;padding:8px 10px;vertical-align:top;text-align:left;font-size:13px}
-th{background:#eaf2ff}
+.panel{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:18px;margin-bottom:20px;overflow:visible}
+.table-wrap{width:100%;max-width:100%;overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid #dbe4f0;border-radius:12px;background:#fff}
+.table-wrap table{width:max-content;min-width:1900px;border-collapse:separate;border-spacing:0;table-layout:auto}
+th,td{border-right:1px solid #dbe4f0;border-bottom:1px solid #dbe4f0;padding:8px 10px;vertical-align:top;text-align:left;font-size:13px;overflow-wrap:anywhere;word-break:break-word;background:#fff}
+th:last-child,td:last-child{border-right:none}
+thead th{position:sticky;top:0;z-index:2;background:#eaf2ff}
 .th-zh{font-size:13px;font-weight:700;line-height:1.2;color:#1e293b}
 .th-en{font-size:10px;font-weight:400;line-height:1.15;color:#64748b;margin-top:2px}
-th{
-    background:#eaf2ff;
-    white-space:normal;
-    width:220px;
-}
+th{white-space:normal;min-width:120px}
+.preview-cell{min-width:320px;max-width:520px}
+.reason-cell{min-width:220px;max-width:360px;color:#7c2d12;background:#fff7ed}
 .search-wrap{
     display:flex;
     align-items:center;
@@ -1433,6 +2804,8 @@ th{
     color:#64748b;
     margin:0 0 14px 0;
 }
+.reason-cell{max-width:220px;overflow-wrap:anywhere;word-break:break-word}
+.preview-cell{max-width:320px;overflow-wrap:anywhere;word-break:break-word}
 .footer{margin-top:24px;color:#64748b;font-size:12px}
 .small{font-size:13px;color:#475569}
 </style>
@@ -1532,6 +2905,7 @@ window.addEventListener("load", function() {
 
    <div class="panel">
 		<h2>$summaryText</h2>
+        <div class="table-wrap">
 		<table>
 			<tr>
 				<th>$thComputerName</th>
@@ -1554,6 +2928,7 @@ window.addEventListener("load", function() {
 				<td>$(Get-SafeHtml ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')))</td>
 			</tr>
 		</table>
+        </div>
 	</div>
 
     <div class="panel">
@@ -1566,6 +2941,7 @@ window.addEventListener("load", function() {
 			<button type="button" class="search-clear" onclick="clearSearch()">$clearLabel</button>
 		</div>
 		<div id="searchStat" class="search-stat" data-total-label="$searchStatAll" data-matched-label="$searchStatMatched"></div>
+        <div class="table-wrap">
 		<table>
 			<thead>
                 <tr>
@@ -1575,6 +2951,8 @@ window.addEventListener("load", function() {
                     <th>$thStatus</th>
                     <th>$thDupType</th>
                     <th>$thRole</th>
+                    <th>$thSource</th>
+                    <th>$thConfidence</th>
                     <th>$thQuality</th>
                     <th>$thGroup</th>
                     <th>$thFileHash</th>
@@ -1587,6 +2965,8 @@ window.addEventListener("load", function() {
                 $($detailRows.ToString())
             </tbody>
         </table>
+        </div>
+        </div>
     </div>
 
     <div class="footer">$generatedBy</div>
@@ -1598,36 +2978,80 @@ window.addEventListener("load", function() {
     [IO.File]::WriteAllText($htmlPath, $html, [Text.Encoding]::UTF8)
     $script:LastHtmlReport = $htmlPath
 
-    Update-Status -Status (T '完成' 'Done') -Summary ("HTML: $htmlPath")
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary ("HTML: $htmlPath")
 
     Write-Host (T 'HTML 報表已輸出。' 'HTML report exported.') -ForegroundColor Green
     Write-Host $htmlPath -ForegroundColor Green
     Write-Host ''
     Write-Host (T '之後可按 [7] 用系統預設瀏覽器開啟最新 HTML 報表。' 'You can press [7] later to open the latest HTML report with the default browser.') -ForegroundColor Cyan
+    }
+    catch {
+        $errMsg = $_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($errMsg)) {
+            $errMsg = (T '未知錯誤' 'Unknown error')
+        }
+
+        Write-Host (T 'HTML 報表輸出失敗。' 'Failed to export HTML report.') -ForegroundColor Red
+        Write-Host $errMsg -ForegroundColor Yellow
+        Update-Status -Status (T '失敗' 'Failed') -Summary ((T 'HTML 輸出失敗' 'HTML export failed') + ': ' + $errMsg)
+    }
+
     Wait-Return
 }
 
 function Open-LatestHtmlReport {
     Clear-Host
+    Reset-UiCachesSafe
 
-    if ([string]::IsNullOrWhiteSpace($script:LastHtmlReport)) {
-        Write-Host (T '尚未匯出 HTML 報表。' 'No HTML report has been exported yet.') -ForegroundColor Yellow
-        Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未匯出 HTML' 'No HTML exported yet')
+    $choices = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LastHtmlReport) -and (Test-Path -LiteralPath $script:LastHtmlReport)) {
+        $choices += [pscustomobject]@{
+            Key  = '1'
+            Name = (T '最新正式 HTML 報表' 'Latest Main HTML Report')
+            Path = $script:LastHtmlReport
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LastRenamePreviewHtml) -and (Test-Path -LiteralPath $script:LastRenamePreviewHtml)) {
+        $choices += [pscustomobject]@{
+            Key  = '2'
+            Name = (T '最新模擬改名 HTML 報表' 'Latest Rename Preview HTML Report')
+            Path = $script:LastRenamePreviewHtml
+        }
+    }
+
+    if (-not $choices -or $choices.Count -eq 0) {
+        Write-Host (T '尚未找到可開啟的 HTML 報表。' 'No HTML reports are available to open yet.') -ForegroundColor Yellow
+        Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未匯出任何 HTML' 'No HTML reports exported yet')
         Wait-Return
         return
     }
 
-    if (-not (Test-Path -LiteralPath $script:LastHtmlReport)) {
-        Write-Host (T '找不到 HTML 報表檔案。' 'HTML report file not found.') -ForegroundColor Red
-        Write-Host $script:LastHtmlReport -ForegroundColor Yellow
-        Update-Status -Status (T '失敗' 'Failed') -Summary (T 'HTML 檔案不存在' 'HTML file does not exist')
-        Wait-Return
-        return
+    Write-Host (T '請選擇要開啟的 HTML 報表：' 'Choose which HTML report to open:') -ForegroundColor Cyan
+    Write-Host ''
+    foreach ($item in $choices) {
+        Write-Host ('[' + $item.Key + '] ' + $item.Name) -ForegroundColor White
+        Write-Host ('    ' + $item.Path) -ForegroundColor DarkGray
+    }
+    Write-Host ('[Esc/Enter] ' + (T '取消' 'Cancel')) -ForegroundColor DarkGray
+    Write-Host ''
+
+    $selected = $null
+    while (-not $selected) {
+        $key = [Console]::ReadKey($true)
+        if ($key.Key -eq 'Escape' -or $key.Key -eq 'Enter') {
+            Update-Status -Status (T '完成' 'Done') -Summary (T '取消開啟 HTML' 'Open HTML cancelled')
+            return
+        }
+
+        $char = $key.KeyChar.ToString()
+        $selected = @($choices | Where-Object { $_.Key -eq $char } | Select-Object -First 1)
     }
 
     try {
-        Start-Process -FilePath $script:LastHtmlReport | Out-Null
-        Update-Status -Status (T '完成' 'Done') -Summary $script:LastHtmlReport
+        Start-Process -FilePath $selected.Path | Out-Null
+        Update-Status -Status (T '完成' 'Done') -Summary $selected.Path
     }
     catch {
         Write-Host (T '無法開啟 HTML 報表。' 'Failed to open HTML report.') -ForegroundColor Red
@@ -1640,127 +3064,322 @@ function Open-LatestHtmlReport {
 # -----------------------------
 # Rename preview / apply
 # -----------------------------
+
+function Get-RenamePlanWithFallback {
+    param([array]$Rows)
+
+    $plans = Get-RenamePlan -Rows $Rows -OnlyGenericNames
+    $mode = 'generic'
+
+    if (-not $plans -or @($plans).Count -eq 0) {
+        $plans = Get-RenamePlan -Rows $Rows
+        $mode = 'all'
+    }
+
+    return New-Object PSObject -Property @{
+        Plans = @($plans)
+        Mode  = $mode
+    }
+}
+
+function New-RenamePreviewDataset {
+    param(
+        [array]$Rows,
+        [array]$Plans
+    )
+
+    $planMap = @{}
+    foreach ($plan in @($Plans)) {
+        if (-not [string]::IsNullOrWhiteSpace($plan.OriginalPath)) {
+            $planMap[$plan.OriginalPath.ToLowerInvariant()] = $plan
+        }
+    }
+
+    $dataset = @()
+    foreach ($row in @($Rows)) {
+        $action = ''
+        $suggestedName = ''
+        $reason = ''
+
+        $key = ''
+        if (-not [string]::IsNullOrWhiteSpace($row.FullPath)) {
+            $key = $row.FullPath.ToLowerInvariant()
+        }
+
+        if ($key -and $planMap.ContainsKey($key)) {
+            $plan = $planMap[$key]
+            $action = T '建議改名' 'Rename Suggested'
+            $suggestedName = [string]$plan.SuggestedName
+            $reason = T '符合自動改名條件' 'Matched auto-rename rules'
+        }
+        else {
+            $suggestedName = [string]$row.FileName
+
+            if ($row.Role -eq 'Broken') {
+                $action = T '略過' 'Skipped'
+                $reason = T '解析失敗或損毀檔案' 'Parse failed or broken file'
+            }
+            else {
+                $action = T '不變更' 'No Change'
+                $reason = T '目前無需改名' 'No rename needed'
+            }
+        }
+
+        $previewLines = @()
+        if (-not [string]::IsNullOrWhiteSpace([string]$row.PreviewText)) {
+            $previewLines = ([string]$row.PreviewText -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        }
+
+        $dataset += New-Object PSObject -Property ([ordered]@{
+            Action         = $action
+            Role           = $row.Role
+            OriginalName   = $row.FileName
+            SuggestedName  = $suggestedName
+            Extension      = $row.Extension
+            LogicalGroup   = $row.LogicalGroup
+            Reason         = $reason
+            PreviewLine1   = $(if ($previewLines.Count -ge 1) { $previewLines[0] } else { '' })
+            PreviewLine2   = $(if ($previewLines.Count -ge 2) { $previewLines[1] } else { '' })
+            PreviewLine3   = $(if ($previewLines.Count -ge 3) { $previewLines[2] } else { '' })
+            PreviewText    = ([string]$row.PreviewText)
+            OriginalPath   = $row.FullPath
+        })
+    }
+
+    return @($dataset)
+}
+
 function Preview-RenamePlan {
     Clear-Host
 
-    if (-not $script:Results -or @($script:Results).Count -eq 0) {
-        Write-Host (T '尚未有掃描結果。' 'No scan results yet.') -ForegroundColor Yellow
-        Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未掃描' 'No scan results')
+    try {
+        if (-not $script:Results -or @($script:Results).Count -eq 0) {
+            Restore-ResultsFromLastCsv
+        }
+
+        if (-not $script:Results -or @($script:Results).Count -eq 0) {
+            Write-Host (T '尚未有掃描結果。' 'No scan results yet.') -ForegroundColor Yellow
+            Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未掃描' 'No scan results')
+            Wait-Return
+            return
+        }
+
+        $renameInfo = Get-RenamePlanWithFallback -Rows $script:Results
+        $plans = @($renameInfo.Plans)
+        $previewRows = @(New-RenamePreviewDataset -Rows $script:Results -Plans $plans)
+
+        if (-not $previewRows -or $previewRows.Count -eq 0) {
+            Write-Host (T '沒有可輸出的模擬改名資料。' 'No rename preview data to export.') -ForegroundColor Yellow
+            Save-StateAndStatus -Status (T '完成' 'Done') -Summary (T '沒有模擬改名資料' 'No rename preview data')
+            Wait-Return
+            return
+        }
+
+        Ensure-Folder $script:OutputRoot
+        $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+        $csvPath = Join-Path $script:OutputRoot ('RenamePreview_{0}.csv' -f $stamp)
+        $htmlPath = Join-Path $script:OutputRoot ('RenamePreview_{0}.html' -f $stamp)
+
+        $script:LastRenamePreviewCsv = $csvPath
+        $script:LastRenamePreviewHtml = $htmlPath
+
+        $previewRows | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+
+        if ($renameInfo.Mode -eq 'all') {
+            Write-Host (T '未找到典型救援檔名，已改為依所有掃描結果產生預覽。' 'No typical recovered generic names were found, preview generated from all scanned files.') -ForegroundColor Yellow
+            Write-Host ''
+        }
+
+        $rows = New-Object System.Text.StringBuilder
+        foreach ($p in $previewRows) {
+            [void]$rows.AppendLine('<tr>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.Action) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.Role) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.OriginalName) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.SuggestedName) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.Extension) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.LogicalGroup) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.Reason) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.PreviewLine1) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.PreviewLine2) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.PreviewLine3) + '</td>')
+            [void]$rows.AppendLine('<td style="overflow-wrap:anywhere;word-break:break-word;">' + (Get-SafeHtml $p.OriginalPath) + '</td>')
+            [void]$rows.AppendLine('</tr>')
+        }
+
+        $html = @"
+<!DOCTYPE html>
+<html lang="$($script:Lang)">
+<head>
+<meta charset="utf-8" />
+<title>$(Get-SafeHtml (T '模擬改名預覽報表' 'Rename Preview Report'))</title>
+<style>
+body{font-family:"Segoe UI","Microsoft JhengHei",Arial,sans-serif;background:#f3f6fb;color:#1f2937;margin:0;padding:24px}
+.wrap{max-width:1400px;margin:0 auto}
+.panel{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:18px}
+.table-wrap{width:100%;max-width:100%;overflow:auto;border:1px solid #dbe4f0;border-radius:12px;background:#fff}
+.table-wrap table{width:100%;min-width:1400px;border-collapse:separate;border-spacing:0;table-layout:auto}
+th,td{border-right:1px solid #dbe4f0;border-bottom:1px solid #dbe4f0;padding:8px 10px;vertical-align:top;text-align:left;font-size:13px;overflow-wrap:anywhere;word-break:break-word;background:#fff}
+th:last-child,td:last-child{border-right:none}
+thead th{position:sticky;top:0;z-index:2;background:#eaf2ff}
+th{min-width:120px}
+</style>
+</head>
+<body>
+<div class="wrap">
+    <div class="panel">
+        <h1>$(Get-SafeHtml (T '模擬改名預覽報表' 'Rename Preview Report'))</h1>
+        <p>$(Get-SafeHtml (T '此報表已包含全部掃描結果；建議改名、不變更與略過項目都會列出。內容預覽已拆成多欄顯示，避免全部資訊擠在同一格。' 'This preview includes all scanned results. Preview text has been split into multiple columns so the information is easier to read.'))</p>
+        <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>$(Get-SafeHtml (T '動作' 'Action'))</th>
+                    <th>$(Get-SafeHtml (T '角色' 'Role'))</th>
+                    <th>$(Get-SafeHtml (T '原始檔名' 'Original Name'))</th>
+                    <th>$(Get-SafeHtml (T '建議檔名' 'Suggested Name'))</th>
+                    <th>$(Get-SafeHtml (T '副檔名' 'Extension'))</th>
+                    <th>$(Get-SafeHtml (T '群組' 'Group'))</th>
+                    <th>$(Get-SafeHtml (T '原因' 'Reason'))</th>
+                    <th>$(Get-SafeHtml (T '預覽 1' 'Preview 1'))</th>
+                    <th>$(Get-SafeHtml (T '預覽 2' 'Preview 2'))</th>
+                    <th>$(Get-SafeHtml (T '預覽 3' 'Preview 3'))</th>
+                    <th>$(Get-SafeHtml (T '原始路徑' 'Original Path'))</th>
+                </tr>
+            </thead>
+            <tbody>
+                $($rows.ToString())
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+"@
+
+        [IO.File]::WriteAllText($htmlPath, $html, [Text.Encoding]::UTF8)
+
+        Save-StateAndStatus -Status (T '完成' 'Done') -Summary ("Rename Preview HTML: $htmlPath")
+
+        Write-Host (T '模擬改名預覽已輸出。' 'Rename preview exported.') -ForegroundColor Green
+        Write-Host ((T '總筆數' 'Total Rows') + ' : ' + $previewRows.Count) -ForegroundColor Green
+        Write-Host ((T '建議改名' 'Rename Suggested') + ' : ' + @($previewRows | Where-Object { $_.Action -eq (T '建議改名' 'Rename Suggested') }).Count) -ForegroundColor Cyan
+        Write-Host ('CSV  : ' + $csvPath) -ForegroundColor Green
+        Write-Host ('HTML : ' + $htmlPath) -ForegroundColor Green
         Wait-Return
-        return
     }
-
-    $plans = Get-RenamePlan -Rows $script:Results -OnlyGenericNames
-
-    if (-not $plans -or $plans.Count -eq 0) {
-        Write-Host (T '沒有可自動改名的檔案。' 'No files available for automatic renaming.') -ForegroundColor Yellow
-        Update-Status -Status (T '完成' 'Done') -Summary (T '沒有可改名項目' 'No rename candidates')
+    catch {
+        Write-Host (T '模擬改名預覽失敗。' 'Rename preview failed.') -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Yellow
+        Save-StateAndStatus -Status (T '失敗' 'Failed') -Summary (T '模擬改名失敗' 'Rename preview failed')
         Wait-Return
-        return
     }
-
-    Ensure-Folder $script:OutputRoot
-    $csvPath = Join-Path $script:OutputRoot ('RenamePreview_{0}.csv' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
-    $plans | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
-
-    Write-Host (T '以下為模擬改名結果（不會真的改檔名）:' 'Rename simulation results (no files will actually be renamed):') -ForegroundColor Cyan
-    Write-Host ''
-
-    $show = $plans | Select-Object -First 20
-    foreach ($p in $show) {
-        Write-Host ('[OLD] ' + $p.OriginalName) -ForegroundColor Gray
-        Write-Host ('[NEW] ' + $p.SuggestedName + '   [' + $p.Role + ']') -ForegroundColor Green
-        Write-Host ''
-    }
-
-    if ($plans.Count -gt 20) {
-        Write-Host ((T '僅顯示前 20 筆，完整結果請看 CSV：' 'Showing first 20 only. Full result saved to CSV:') + ' ' + $csvPath) -ForegroundColor Yellow
-    }
-    else {
-        Write-Host ('CSV : ' + $csvPath) -ForegroundColor Green
-    }
-
-    Update-Status -Status (T '完成' 'Done') -Summary ("Rename Preview CSV: $csvPath")
-    Wait-Return
 }
 
 function Invoke-AutoRename {
     Clear-Host
 
-    if (-not $script:Results -or @($script:Results).Count -eq 0) {
-        Write-Host (T '尚未有掃描結果。' 'No scan results yet.') -ForegroundColor Yellow
-        Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未掃描' 'No scan results')
-        Wait-Return
-        return
-    }
-
-    $plans = Get-RenamePlan -Rows $script:Results -OnlyGenericNames
-
-    if (-not $plans -or $plans.Count -eq 0) {
-        Write-Host (T '沒有可自動改名的檔案。' 'No files available for automatic renaming.') -ForegroundColor Yellow
-        Update-Status -Status (T '完成' 'Done') -Summary (T '沒有可改名項目' 'No rename candidates')
-        Wait-Return
-        return
-    }
-
-    Write-Host (T '即將進行實際改名。' 'About to perform actual renaming.') -ForegroundColor Yellow
-    Write-Host ((T '符合條件的檔案數量' 'Number of eligible files') + ' : ' + $plans.Count)
-    Write-Host ''
-    Write-Host (T '請輸入 YES 確認執行：' 'Type YES to confirm:') -ForegroundColor Cyan
-
-    $confirm = Read-Host
-    if ($confirm -ne 'YES') {
-        Update-Status -Status (T '取消' 'Cancelled') -Summary (T '使用者取消改名' 'Rename cancelled by user')
-        return
-    }
-
-    Ensure-Folder $script:OutputRoot
-
-    $log = @()
-    $success = 0
-    $failed = 0
-
-    foreach ($p in $plans) {
-        try {
-            Rename-Item -LiteralPath $p.OriginalPath -NewName $p.SuggestedName -ErrorAction Stop
-
-            $log += New-Object PSObject -Property ([ordered]@{
-                OriginalName  = $p.OriginalName
-                SuggestedName = $p.SuggestedName
-                Role          = $p.Role
-                Status        = 'Renamed'
-                Reason        = ''
-            })
-
-            $success++
+    try {
+        if (-not $script:Results -or @($script:Results).Count -eq 0) {
+            Restore-ResultsFromLastCsv
         }
-        catch {
-            $log += New-Object PSObject -Property ([ordered]@{
-                OriginalName  = $p.OriginalName
-                SuggestedName = $p.SuggestedName
-                Role          = $p.Role
-                Status        = 'Failed'
-                Reason        = $_.Exception.Message
-            })
 
-            $failed++
+        if (-not $script:Results -or @($script:Results).Count -eq 0) {
+            Write-Host (T '尚未有掃描結果。' 'No scan results yet.') -ForegroundColor Yellow
+            Update-Status -Status (T '失敗' 'Failed') -Summary (T '尚未掃描' 'No scan results')
+            Wait-Return
+            return
+        }
+
+        $renameInfo = Get-RenamePlanWithFallback -Rows $script:Results
+        $plans = @($renameInfo.Plans)
+
+        if (-not $plans -or $plans.Count -eq 0) {
+            Write-Host (T '沒有可自動改名的檔案。' 'No files available for automatic renaming.') -ForegroundColor Yellow
+            Update-Status -Status (T '完成' 'Done') -Summary (T '沒有可改名項目' 'No rename candidates')
+            Wait-Return
+            return
+        }
+
+        if ($renameInfo.Mode -eq 'all') {
+            Write-Host (T '未找到典型救援檔名，將對所有可建議改名的檔案執行改名。' 'No typical recovered generic names were found; renaming will apply to all renameable files.') -ForegroundColor Yellow
+        }
+
+        Write-Host (T '即將進行實際改名。' 'About to perform actual renaming.') -ForegroundColor Yellow
+        Write-Host ((T '符合條件的檔案數量' 'Number of eligible files') + ' : ' + $plans.Count)
+        Write-Host ''
+        Write-Host (T '請輸入 YES 確認執行：' 'Type YES to confirm:') -ForegroundColor Cyan
+
+        $confirm = Read-Host
+        if ($confirm -ne 'YES') {
+            Update-Status -Status (T '取消' 'Cancelled') -Summary (T '使用者取消改名' 'Rename cancelled by user')
+            return
+        }
+
+        Ensure-Folder $script:OutputRoot
+
+        $log = @()
+        $success = 0
+        $failed = 0
+
+        foreach ($p in $plans) {
+            try {
+                Rename-Item -LiteralPath $p.OriginalPath -NewName $p.SuggestedName -ErrorAction Stop
+
+                $log += New-Object PSObject -Property ([ordered]@{
+                    OriginalName  = $p.OriginalName
+                    SuggestedName = $p.SuggestedName
+                    Role          = $p.Role
+                    Status        = 'Renamed'
+                    Reason        = ''
+                })
+
+                $success++
+            }
+            catch {
+                $log += New-Object PSObject -Property ([ordered]@{
+                    OriginalName  = $p.OriginalName
+                    SuggestedName = $p.SuggestedName
+                    Role          = $p.Role
+                    Status        = 'Failed'
+                    Reason        = $_.Exception.Message
+                })
+
+                $failed++
+            }
+        }
+
+        $csvPath = Join-Path $script:OutputRoot ('RenameLog_{0}.csv' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+        $log | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+
+        Write-Host ''
+        Write-Host (T '自動改名完成。' 'Automatic renaming completed.') -ForegroundColor Green
+        Write-Host ((T '成功' 'Succeeded') + ' : ' + $success) -ForegroundColor Green
+        Write-Host ((T '失敗' 'Failed') + ' : ' + $failed) -ForegroundColor Yellow
+        Write-Host ('CSV : ' + $csvPath) -ForegroundColor Green
+
+        $script:LastRenameLog = $csvPath
+        Save-StateAndStatus -Status (T '完成' 'Done') -Summary ("Rename Log CSV: $csvPath")
+
+        if ($success -gt 0) {
+            $currentRoot = $script:ScanRoot
+            Start-Scan
+            $script:ScanRoot = $currentRoot
+        }
+        else {
+            Wait-Return
         }
     }
-
-    $csvPath = Join-Path $script:OutputRoot ('RenameLog_{0}.csv' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
-    $log | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
-
-    Write-Host ''
-    Write-Host (T '自動改名完成。' 'Automatic renaming completed.') -ForegroundColor Green
-    Write-Host ((T '成功' 'Succeeded') + ' : ' + $success) -ForegroundColor Green
-    Write-Host ((T '失敗' 'Failed') + ' : ' + $failed) -ForegroundColor Yellow
-    Write-Host ('CSV : ' + $csvPath) -ForegroundColor Green
-
-    Update-Status -Status (T '完成' 'Done') -Summary ("Rename Log CSV: $csvPath")
-
-    $currentRoot = $script:ScanRoot
-    Start-Scan
-    $script:ScanRoot = $currentRoot
+    catch {
+        Write-Host (T '自動改名流程發生錯誤。' 'Automatic rename failed.') -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Yellow
+        Save-StateAndStatus -Status (T '失敗' 'Failed') -Summary (T '自動改名失敗' 'Automatic rename failed')
+        Wait-Return
+    }
+    finally {
+        $script:IsRenameInProgress = $false
+    }
 }
 
 # -----------------------------
@@ -1862,6 +3481,7 @@ function Invoke-OrganizeFiles {
     $csv = Join-Path $script:OutputRoot ("OrganizeLog_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     $log | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
     $script:LastOrganizerLog = $csv
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary ("Organize Log CSV: $csv")
 
     Write-Host ''
     Write-Host (T '整理完成' 'Completed') -ForegroundColor Green
@@ -1877,10 +3497,41 @@ function Toggle-OrganizeMode {
     } else {
         $script:OrganizeMode = 'Copy'
     }
+    Save-AppState
 }
 
 function Toggle-PrimaryOnly {
     $script:OrganizePrimaryOnly = -not $script:OrganizePrimaryOnly
+    Save-AppState
+}
+
+
+# -----------------------------
+# Reset UiCaches
+# -----------------------------
+function Reset-UiCachesSafe {
+    try {
+        $script:LastRightPanelLines = @()
+    } catch {}
+
+    try {
+        $script:LastStatusBarLines = @()
+    } catch {}
+
+    try {
+        $script:LastMenuRenderWidth = 0
+    } catch {}
+
+    try {
+        $script:UiCache.SettingsLines = @()
+        $script:UiCache.StatusLines = @()
+        $script:UiCache.WindowWidth = 0
+        $script:UiCache.WindowHeight = 0
+    } catch {}
+
+    try {
+        $script:ForceFullRedraw = $true
+    } catch {}
 }
 
 # -----------------------------
@@ -1892,21 +3543,28 @@ function Set-ScanRoot {
     $inputPath = Read-Host
 
     if ([string]::IsNullOrWhiteSpace($inputPath)) {
-        Update-Status -Status (T '就緒' 'Ready') -Summary $script:ScanRoot
+        Save-StateAndStatus -Status (T '就緒' 'Ready') -Summary $script:ScanRoot
+
+        # 清除 UI 快取，避免右側資訊區消失
+        Reset-UiCachesSafe
         return
     }
 
-    if (Test-Path $inputPath) {
+    if (Test-Path -LiteralPath $inputPath) {
         $script:ScanRoot = $inputPath
-        Update-Status -Status (T '完成' 'Done') -Summary $script:ScanRoot
+        Save-StateAndStatus -Status (T '完成' 'Done') -Summary $script:ScanRoot
+
+        # 很重要：清掉快取，讓主選單回來時完整重畫
+        Reset-UiCachesSafe
     }
     else {
         Write-Host (T '資料夾不存在。' 'Folder does not exist.') -ForegroundColor Red
-        Update-Status -Status (T '失敗' 'Failed') -Summary (T '資料夾不存在' 'Folder does not exist')
+        Save-StateAndStatus -Status (T '失敗' 'Failed') -Summary (T '資料夾不存在' 'Folder does not exist')
+
+        Reset-UiCachesSafe
         Wait-Return
     }
 }
-
 
 
 function Test-KeyMatch {
@@ -1942,11 +3600,16 @@ function Test-KeyMatch {
 # Bootstrap
 # -----------------------------
 Ensure-Folder $script:OutputRoot
-Update-Status -Status (T '就緒' 'Ready') -Summary ''
+Load-AppState
+Restore-ResultsFromLastCsv
+Ensure-Folder $script:OutputRoot
+Update-Status -Status (T '就緒' 'Ready') -Summary $script:LastSummary
+Save-AppState
 
 [Console]::CursorVisible = $false
 try {
     $needsFullRedraw = $true
+	
     while ($true) {
         if ($needsFullRedraw) {
             Draw-UI
@@ -1970,6 +3633,12 @@ try {
             continue
         }
 
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'C' -VirtualKeyCode 67 -Chars @('c','C')) {
+            Toggle-LegacyConversionMode
+            $needsFullRedraw = $true
+            continue
+        }
+
         if (Test-KeyMatch -KeyInfo $key -KeyName 'L' -VirtualKeyCode 76 -Chars @('l','L')) {
             if ($script:Lang -eq 'zh-TW') {
                 $script:Lang = 'en-US'
@@ -1977,7 +3646,7 @@ try {
             else {
                 $script:Lang = 'zh-TW'
             }
-            Update-Status -Status (T '就緒' 'Ready') -Summary ((T '語系已切換' 'Language switched') + ': ' + $script:Lang)
+            Save-StateAndStatus -Status (T '就緒' 'Ready') -Summary ((T '語系已切換' 'Language switched') + ': ' + $script:Lang)
             $needsFullRedraw = $true
             continue
         }
@@ -2035,7 +3704,7 @@ try {
             }
             'ToggleMode' {
                 Toggle-OrganizeMode
-                Update-Status -Status (T '完成' 'Done') -Summary ((T '整理模式已切換為' 'Organize mode switched to') + ': ' + $script:OrganizeMode)
+                Save-StateAndStatus -Status (T '完成' 'Done') -Summary ((T '整理模式已切換為' 'Organize mode switched to') + ': ' + $script:OrganizeMode)
                 Draw-StatusBar
                 Draw-SettingsPanel
                 Draw-OneMenuItem -Index $script:SelectedMenu -Selected
@@ -2043,10 +3712,15 @@ try {
             }
             'TogglePrimaryOnly' {
                 Toggle-PrimaryOnly
-                Update-Status -Status (T '完成' 'Done') -Summary ((T '只整理主檔已切換為' 'Primary only switched to') + ': ' + $script:OrganizePrimaryOnly)
+                Save-StateAndStatus -Status (T '完成' 'Done') -Summary ((T '只整理主檔已切換為' 'Primary only switched to') + ': ' + $script:OrganizePrimaryOnly)
                 Draw-StatusBar
                 Draw-SettingsPanel
                 Draw-OneMenuItem -Index $script:SelectedMenu -Selected
+                continue
+            }
+            'ToggleLegacyConversion' {
+                Toggle-LegacyConversionMode
+                $needsFullRedraw = $true
                 continue
             }
             'Exit' { return }
@@ -2054,6 +3728,7 @@ try {
     }
 }
 finally {
+    Save-AppState
     [Console]::CursorVisible = $true
     Clear-Host
 }
