@@ -1,5 +1,5 @@
 
-Office Recovery Toolkit v5.8 (LightBar Menu)
+Office Recovery Toolkit v5.8.1 (LightBar Menu)
 
 (en-US)
 Usage:
