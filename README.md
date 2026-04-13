@@ -1,5 +1,6 @@
 # Office Recovery Toolkit v5.8.5.2 (LightBar Menu) 
-This utility is designed for scenarios where recovered files have lost their original naming data due to a missing Master File Table (MFT). 
+This utility is designed for scenarios where recovered files have lost their original naming data
+due to a missing Master File Table (MFT).   
 It serves as an auxiliary tool that extracts file content to perform intelligent renaming.
   
 # Usage:  
