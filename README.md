@@ -5,7 +5,10 @@ It serves as an auxiliary tool that extracts file content to perform intelligent
   
 # Usage:  
 After extracting the files, run:  
-OfficeRecoveryToolkit.cmd  
+OfficeRecoveryToolkit.cmd 
+
+# SHA256:  
+F7B5EA788E89E3449B4D5D8BCB5CEBE72D9F24A36767B8F32656248E9CECB74E
   
 # Required Installation  
 Microsoft Office Word, Excel, and PowerPoint 2007 File Format Compatibility Pack  
@@ -41,7 +44,10 @@ Highlight Primary files in HTML with ⭐
 可利用這個程式來擷取檔案內容來智慧命名檔案名稱，可當作輔助工具。  
 
 # 使用方式:  
-解壓縮後，執行: OfficeRecoveryToolkit.cmd   
+解壓縮後，執行: OfficeRecoveryToolkit.cmd
+
+# SHA256:  
+F7B5EA788E89E3449B4D5D8BCB5CEBE72D9F24A36767B8F32656248E9CECB74E
   
 # 必要安裝:  
 Microsoft Office Word、Excel 及 PowerPoint 2007 檔案格式相容性套件  
