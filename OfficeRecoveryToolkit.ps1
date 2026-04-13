@@ -1,5 +1,5 @@
 ﻿# ================================
-# Office Recovery Toolkit v5.7
+# Office Recovery Toolkit v5.8.2
 # PowerShell 5.1 Compatible
 # ================================
 
@@ -23,7 +23,9 @@ $script:LastRenamePreviewHtml = ''
 $script:LastRenameLog = ''
 $script:SettingsPath = Join-Path $PSScriptRoot 'OfficeRecoveryToolkit.settings.json'
 
-# v5.4 settings
+# -----------------------------
+# Initial Settings
+# -----------------------------
 $script:OrganizeMode = 'Copy'   # Copy / Move
 $script:OrganizePrimaryOnly = $true
 $script:LegacyQuickMode = $true
@@ -34,6 +36,11 @@ $script:LegacyOfficeTimeoutSec = 45
 $script:LegacyOfficeMaxFileMB = 32
 $script:LegacyConversionMode = $true
 $script:LegacyKeepTempConverted = $false
+$script:OfficeProbeEnabled = $true
+$script:OfficeProbeTimeoutSec = 15
+$script:OfficeProbePath = Join-Path $PSScriptRoot 'OfficeEncryptionProbe.exe'
+$script:KillOfficeProcessesBeforeScan = $true
+$script:KillOfficeProcessesOnTimeout = $true
 $script:SelectedMenu = 0
 $script:UiCache = @{
     WindowWidth = 0
@@ -110,6 +117,11 @@ function Save-AppState {
             LegacyOfficeMaxFileMB = $script:LegacyOfficeMaxFileMB
             LegacyConversionMode = $script:LegacyConversionMode
             LegacyKeepTempConverted = $script:LegacyKeepTempConverted
+            OfficeProbeEnabled = $script:OfficeProbeEnabled
+            OfficeProbeTimeoutSec = $script:OfficeProbeTimeoutSec
+            OfficeProbePath = $script:OfficeProbePath
+            KillOfficeProcessesBeforeScan = $script:KillOfficeProcessesBeforeScan
+            KillOfficeProcessesOnTimeout = $script:KillOfficeProcessesOnTimeout
             LastHtmlReport = $script:LastHtmlReport
             LastOrganizerLog = $script:LastOrganizerLog
             LastCsvReport = $script:LastCsvReport
@@ -143,6 +155,11 @@ function Load-AppState {
         if ($cfg.LegacyOfficeMaxFileMB) { $script:LegacyOfficeMaxFileMB = [int]$cfg.LegacyOfficeMaxFileMB }
         if ($null -ne $cfg.LegacyConversionMode) { $script:LegacyConversionMode = [bool]$cfg.LegacyConversionMode }
         if ($null -ne $cfg.LegacyKeepTempConverted) { $script:LegacyKeepTempConverted = [bool]$cfg.LegacyKeepTempConverted }
+        if ($null -ne $cfg.OfficeProbeEnabled) { $script:OfficeProbeEnabled = [bool]$cfg.OfficeProbeEnabled }
+        if ($cfg.OfficeProbeTimeoutSec) { $script:OfficeProbeTimeoutSec = [int]$cfg.OfficeProbeTimeoutSec }
+        if ($cfg.OfficeProbePath) { $script:OfficeProbePath = [string]$cfg.OfficeProbePath }
+        if ($null -ne $cfg.KillOfficeProcessesBeforeScan) { $script:KillOfficeProcessesBeforeScan = [bool]$cfg.KillOfficeProcessesBeforeScan }
+        if ($null -ne $cfg.KillOfficeProcessesOnTimeout) { $script:KillOfficeProcessesOnTimeout = [bool]$cfg.KillOfficeProcessesOnTimeout }
         if ($cfg.LastHtmlReport) { $script:LastHtmlReport = [string]$cfg.LastHtmlReport }
         if ($cfg.LastOrganizerLog) { $script:LastOrganizerLog = [string]$cfg.LastOrganizerLog }
         if ($cfg.LastCsvReport) { $script:LastCsvReport = [string]$cfg.LastCsvReport }
@@ -153,6 +170,243 @@ function Load-AppState {
         if ($cfg.LastSummary) { $script:LastSummary = [string]$cfg.LastSummary }
     }
     catch {}
+}
+
+
+function Stop-OrphanOfficeProcesses {
+    param(
+        [switch]$Force
+    )
+
+    $names = @('WINWORD','EXCEL','POWERPNT','wordconv','excelcnv','ppcnvcom')
+    foreach ($name in $names) {
+        try {
+            Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
+                try {
+                    if ($Force) {
+                        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        Stop-Process -Id $_.Id -ErrorAction SilentlyContinue
+                    }
+                }
+                catch {}
+            }
+        }
+        catch {}
+    }
+}
+
+function Get-DefaultOfficeProbePath {
+    $exe = Join-Path $PSScriptRoot 'OfficeEncryptionProbe.exe'
+    if (Test-Path -LiteralPath $exe) { return $exe }
+    return ''
+}
+
+function Get-OfficeProbePath {
+    if (-not [string]::IsNullOrWhiteSpace($script:OfficeProbePath) -and (Test-Path -LiteralPath $script:OfficeProbePath)) {
+        return $script:OfficeProbePath
+    }
+    return (Get-DefaultOfficeProbePath)
+}
+
+function Invoke-OfficeEncryptionProbe {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [int]$TimeoutSec = 15
+    )
+
+    $fallback = [pscustomobject]@{
+        State = 'Unavailable'
+        Detail = 'Probe tool not found'
+        ExitCode = 6
+        CanOpenSafely = $false
+        CanConvertSafely = $false
+    }
+
+    if (-not $script:OfficeProbeEnabled) { return $fallback }
+    $tool = Get-OfficeProbePath
+    if ([string]::IsNullOrWhiteSpace($tool) -or -not (Test-Path -LiteralPath $tool)) {
+        return $fallback
+    }
+
+    $stdoutPath = Join-Path $env:TEMP ('ORT_PROBE_OUT_' + [guid]::NewGuid().ToString() + '.json')
+    $stderrPath = Join-Path $env:TEMP ('ORT_PROBE_ERR_' + [guid]::NewGuid().ToString() + '.txt')
+
+    try {
+        $proc = Start-Process -FilePath $tool -ArgumentList @('--json', '--path', $Path) -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $completed = $proc.WaitForExit($TimeoutSec * 1000)
+        if (-not $completed) {
+            try { $proc.Kill() } catch {}
+            if ($script:KillOfficeProcessesOnTimeout) { Stop-OrphanOfficeProcesses -Force }
+            return [pscustomobject]@{
+                State = 'Error'
+                Detail = 'Probe timeout'
+                ExitCode = 6
+                CanOpenSafely = $false
+                CanConvertSafely = $false
+            }
+        }
+
+        $stdout = ''
+        $stderr = ''
+        if (Test-Path -LiteralPath $stdoutPath) { try { $stdout = Get-Content -LiteralPath $stdoutPath -Raw -Encoding UTF8 } catch {} }
+        if (Test-Path -LiteralPath $stderrPath) { try { $stderr = Get-Content -LiteralPath $stderrPath -Raw -Encoding UTF8 } catch {} }
+
+        if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+            try {
+                $obj = $stdout | ConvertFrom-Json -ErrorAction Stop
+                if ($null -eq $obj.ExitCode) {
+                    try { $obj | Add-Member -NotePropertyName ExitCode -NotePropertyValue ([int]$proc.ExitCode) -Force } catch {}
+                }
+                if ([string]::IsNullOrWhiteSpace([string]$obj.Detail) -and -not [string]::IsNullOrWhiteSpace($stderr)) {
+                    try { $obj.Detail = $stderr.Trim() } catch {}
+                }
+                return $obj
+            }
+            catch {
+            }
+        }
+
+        return [pscustomobject]@{
+            State = 'Error'
+            Detail = $(if (-not [string]::IsNullOrWhiteSpace($stderr)) { $stderr.Trim() } elseif (-not [string]::IsNullOrWhiteSpace($stdout)) { $stdout.Trim() } else { 'Probe returned invalid output' })
+            ExitCode = [int]$(if ($proc) { $proc.ExitCode } else { 6 })
+            CanOpenSafely = $false
+            CanConvertSafely = $false
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            State = 'Error'
+            Detail = $_.Exception.Message
+            ExitCode = 6
+            CanOpenSafely = $false
+            CanConvertSafely = $false
+        }
+        Show-ProgressLine -Current $total -Total $total -FileName '' -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $stdoutPath) { try { Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue } catch {} }
+        if (Test-Path -LiteralPath $stderrPath) { try { Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue } catch {} }
+    }
+}
+
+function Test-ShouldSkipOfficeByProbe {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath
+    )
+
+    $probe = Invoke-OfficeEncryptionProbe -Path $FilePath -TimeoutSec $script:OfficeProbeTimeoutSec
+    if (-not $probe) { return $null }
+
+    $state = [string]$probe.State
+    if ($state -in @('Encrypted','WriteProtectedOnly','PossiblyProtected','Corrupt')) {
+        return [pscustomobject]@{
+            Skip = $true
+            State = $state
+            Detail = [string]$probe.Detail
+            ExitCode = [int]$probe.ExitCode
+            Probe = $probe
+        }
+    }
+
+    if ($state -eq 'Error') {
+        return [pscustomobject]@{
+            Skip = $true
+            State = 'ProbeError'
+            Detail = if ([string]::IsNullOrWhiteSpace([string]$probe.Detail)) { 'Probe failed' } else { [string]$probe.Detail }
+            ExitCode = [int]$probe.ExitCode
+            Probe = $probe
+        }
+    }
+
+    return [pscustomobject]@{
+        Skip = $false
+        State = $state
+        Detail = [string]$probe.Detail
+        ExitCode = [int]$probe.ExitCode
+        Probe = $probe
+    }
+}
+
+
+function Test-OoxmlProtectionState {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath
+    )
+
+    $res = [ordered]@{
+        Skip = $false
+        State = 'NotProtected'
+        Detail = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        $res.State = 'Missing'
+        $res.Detail = 'File not found'
+        return [pscustomobject]$res
+    }
+
+    try {
+        $fs = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            if ($fs.Length -ge 8) {
+                $sig = New-Object byte[] 8
+                [void]$fs.Read($sig, 0, 8)
+                $ole = @(0xD0,0xCF,0x11,0xE0,0xA1,0xB1,0x1A,0xE1)
+                $isOle = $true
+                for ($i = 0; $i -lt 8; $i++) {
+                    if ($sig[$i] -ne $ole[$i]) { $isOle = $false; break }
+                }
+                if ($isOle) {
+                    $res.Skip = $true
+                    $res.State = 'Encrypted'
+                    $res.Detail = 'OOXML password-protected package detected'
+                    return [pscustomobject]$res
+                }
+            }
+        }
+        finally {
+            $fs.Dispose()
+        }
+    }
+    catch {
+    }
+
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue | Out-Null
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($FilePath)
+        try {
+            foreach ($entry in $zip.Entries) {
+                if ($entry.FullName -eq 'EncryptionInfo' -or $entry.FullName -eq 'EncryptedPackage') {
+                    $res.Skip = $true
+                    $res.State = 'Encrypted'
+                    $res.Detail = 'OOXML encryption markers detected'
+                    return [pscustomobject]$res
+                }
+            }
+        }
+        finally {
+            $zip.Dispose()
+        }
+    }
+    catch {
+    }
+
+    return [pscustomobject]$res
+}
+
+function Test-ShouldSkipLegacyOfficeByProbe {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath,
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType
+    )
+    return (Test-ShouldSkipOfficeByProbe -FilePath $FilePath)
 }
 
 
@@ -439,7 +693,7 @@ function Draw-Frame {
     }
 
     Write-At 0 0  ('=' * ($w - 1)) Cyan Black
-    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8 LightBar' 'Office Recovery Analyzer v5.8 LightBar') White DarkBlue
+    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.2 LightBar' 'Office Recovery Analyzer v5.8.2 LightBar') White DarkBlue
     Write-At 2 2  (T '↑↓ 光棒選擇  Enter 執行  數字快速鍵  L 切換語系  Esc 離開' '↑↓ Select  Enter Run  Number hotkeys  L switch language  Esc exit') Gray Black
     Write-At 0 3  ('=' * ($w - 1)) Cyan Black
     return $true
@@ -637,14 +891,91 @@ function Draw-UI {
     Draw-StatusBar -Force:$force
 }
 
+$script:UseNativeProgressBar = $false
+$script:ProgressRefreshMs = 180
+$script:LastProgressRenderAt = [datetime]::MinValue
+$script:ProgressUiActive = $false
+$script:ProgressBaseRow = -1
+$script:ProgressLastLine = ''
+$script:ProgressCursorHidden = $false
+
+function Start-ScanProgressUi {
+    if ($script:ProgressUiActive) { return }
+
+    $script:LastProgressRenderAt = [datetime]::MinValue
+    $script:ProgressLastLine = ''
+
+    try {
+        [Console]::CursorVisible = $false
+        $script:ProgressCursorHidden = $true
+    }
+    catch {
+        $script:ProgressCursorHidden = $false
+    }
+
+    try {
+        $script:ProgressBaseRow = [Console]::CursorTop
+    }
+    catch {
+        $script:ProgressBaseRow = -1
+    }
+
+    Write-Host ''
+    $script:ProgressUiActive = $true
+}
+
+function Stop-ScanProgressUi {
+    if (-not $script:ProgressUiActive) { return }
+
+    try {
+        if ($script:ProgressBaseRow -ge 0) {
+            [Console]::SetCursorPosition(0, $script:ProgressBaseRow)
+            $blankWidth = [Math]::Max(1, [Console]::BufferWidth - 1)
+            [Console]::Write((' ' * $blankWidth))
+            [Console]::SetCursorPosition(0, $script:ProgressBaseRow)
+        }
+    }
+    catch {}
+
+    if ($script:UseNativeProgressBar) {
+        Write-Progress -Activity (T '掃描中' 'Scanning') -Completed
+    }
+
+    try {
+        if ($script:ProgressCursorHidden) {
+            [Console]::CursorVisible = $true
+        }
+    }
+    catch {}
+
+    $script:ProgressUiActive = $false
+    $script:ProgressBaseRow = -1
+    $script:ProgressLastLine = ''
+    $script:ProgressCursorHidden = $false
+}
+
 function Show-ProgressLine {
     param(
         [int]$Current,
         [int]$Total,
-        [string]$FileName
+        [string]$FileName,
+        [switch]$Force
     )
 
-    $barWidth = 40
+    if (-not $script:ProgressUiActive) {
+        Start-ScanProgressUi
+    }
+
+    $now = Get-Date
+    if (-not $Force) {
+        $elapsed = ($now - $script:LastProgressRenderAt).TotalMilliseconds
+        if ($elapsed -lt $script:ProgressRefreshMs -and $Current -lt $Total) {
+            return
+        }
+    }
+    $script:LastProgressRenderAt = $now
+
+    $barWidth = 32
     if ($Total -gt 0) {
         $pct = [Math]::Floor(($Current * 100) / $Total)
     } else {
@@ -653,10 +984,52 @@ function Show-ProgressLine {
 
     $filled = [Math]::Floor(($pct * $barWidth) / 100)
     $empty = $barWidth - $filled
-    $bar = ('#' * $filled) + ('-' * $empty)
+    $bar = ('█' * $filled) + ('░' * $empty)
 
-    Write-Progress -Activity (T '掃描中' 'Scanning') -Status $FileName -PercentComplete $pct
-    Write-Host ('[{0}] {1,3}%  ({2}/{3})  {4}' -f $bar, $pct, $Current, $Total, $FileName)
+    $safeName = if ([string]::IsNullOrWhiteSpace($FileName)) { '' } else { $FileName }
+    if ($safeName.Length -gt 58) {
+        $safeName = $safeName.Substring(0, 55) + '...'
+    }
+
+    $line = ('{0} [{1}] {2,3}%  ({3}/{4})  {5}' -f (T '掃描中' 'Scanning'), $bar, $pct, $Current, $Total, $safeName)
+
+    if ($script:UseNativeProgressBar) {
+        Write-Progress -Activity (T '掃描中' 'Scanning') -Status $safeName -PercentComplete $pct
+    }
+
+    try {
+        $width = [Console]::BufferWidth
+        if ($width -lt 20) { $width = 120 }
+    }
+    catch {
+        $width = 120
+    }
+
+    if ($line.Length -gt ($width - 1)) {
+        $line = $line.Substring(0, [Math]::Max(1, $width - 1))
+    }
+
+    $padLen = [Math]::Max(0, $width - $line.Length - 1)
+    $render = $line + (' ' * $padLen)
+
+    if (-not $Force -and $render -eq $script:ProgressLastLine -and $Current -lt $Total) {
+        return
+    }
+
+    try {
+        if ($script:ProgressBaseRow -ge 0) {
+            [Console]::SetCursorPosition(0, $script:ProgressBaseRow)
+            [Console]::Write($render)
+        }
+        else {
+            [Console]::Write("`r$render")
+        }
+    }
+    catch {
+        [Console]::Write("`r$render")
+    }
+
+    $script:ProgressLastLine = $render
 }
 
 # -----------------------------
@@ -1160,6 +1533,7 @@ if (`$result) {
         $completed = $proc.WaitForExit($TimeoutSec * 1000)
         if (-not $completed) {
             try { $proc.Kill() } catch {}
+            if ($script:KillOfficeProcessesOnTimeout) { Stop-OrphanOfficeProcesses -Force }
             return ''
         }
 
@@ -1271,6 +1645,7 @@ function Convert-LegacyOfficeViaConverterToTemp {
         $completed = $proc.WaitForExit($TimeoutSec * 1000)
         if (-not $completed) {
             try { $proc.Kill() } catch {}
+            if ($script:KillOfficeProcessesOnTimeout) { Stop-OrphanOfficeProcesses -Force }
             $result.Status = 'Timeout'
             $result.Error = 'Conversion timeout'
             return New-Object PSObject -Property $result
@@ -1791,11 +2166,25 @@ function Get-OfficeContentInfo {
         LegacyConverted = $false
         ConvertedType = ''
         ConversionStatus = ''
+        ProtectionState = ''
+        ProtectionDetail = ''
     }
 
     try {
         switch ($ext) {
             '.docx' {
+                $ooxmlProtection = Test-OoxmlProtectionState -FilePath $FilePath
+                if ($ooxmlProtection) {
+                    $result.ProtectionState = [string]$ooxmlProtection.State
+                    $result.ProtectionDetail = [string]$ooxmlProtection.Detail
+                }
+                if ($ooxmlProtection -and $ooxmlProtection.Skip) {
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($ooxmlProtection.Detail) { [string]$ooxmlProtection.Detail } else { [string]$ooxmlProtection.State }
+                    $result.ConversionStatus = 'SkippedByProtectionCheck'
+                    $result.ContentSource = 'OOXML protection check'
+                    return New-Object PSObject -Property $result
+                }
                 $xml = Get-ZipEntryText -ZipPath $FilePath -Candidates @('word/document.xml')
                 if ($xml) {
                     $plain = Normalize-XmlText $xml
@@ -1816,6 +2205,18 @@ function Get-OfficeContentInfo {
             }
 
             '.xlsx' {
+                $ooxmlProtection = Test-OoxmlProtectionState -FilePath $FilePath
+                if ($ooxmlProtection) {
+                    $result.ProtectionState = [string]$ooxmlProtection.State
+                    $result.ProtectionDetail = [string]$ooxmlProtection.Detail
+                }
+                if ($ooxmlProtection -and $ooxmlProtection.Skip) {
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($ooxmlProtection.Detail) { [string]$ooxmlProtection.Detail } else { [string]$ooxmlProtection.State }
+                    $result.ConversionStatus = 'SkippedByProtectionCheck'
+                    $result.ContentSource = 'OOXML protection check'
+                    return New-Object PSObject -Property $result
+                }
                 Add-Type -AssemblyName System.IO.Compression.FileSystem
                 $zip = $null
                 $parts = @()
@@ -1870,6 +2271,18 @@ function Get-OfficeContentInfo {
             }
 
             '.pptx' {
+                $ooxmlProtection = Test-OoxmlProtectionState -FilePath $FilePath
+                if ($ooxmlProtection) {
+                    $result.ProtectionState = [string]$ooxmlProtection.State
+                    $result.ProtectionDetail = [string]$ooxmlProtection.Detail
+                }
+                if ($ooxmlProtection -and $ooxmlProtection.Skip) {
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($ooxmlProtection.Detail) { [string]$ooxmlProtection.Detail } else { [string]$ooxmlProtection.State }
+                    $result.ConversionStatus = 'SkippedByProtectionCheck'
+                    $result.ContentSource = 'OOXML protection check'
+                    return New-Object PSObject -Property $result
+                }
                 Add-Type -AssemblyName System.IO.Compression.FileSystem
                 $zip = $null
                 $parts = @()
@@ -1913,6 +2326,19 @@ function Get-OfficeContentInfo {
             '.doc' {
                 $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
                 $canTryOffice = $fileInfo -and ($fileInfo.Length -le ($script:LegacyOfficeMaxFileMB * 1MB))
+
+                $probeDecision = Test-ShouldSkipLegacyOfficeByProbe -FilePath $FilePath -AppType Word
+                if ($probeDecision) {
+                    $result.ProtectionState = [string]$probeDecision.State
+                    $result.ProtectionDetail = [string]$probeDecision.Detail
+                }
+                if ($probeDecision -and $probeDecision.Skip) {
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($probeDecision.Detail) { [string]$probeDecision.Detail } else { [string]$probeDecision.State }
+                    $result.ConversionStatus = 'SkippedByProbe'
+                    $result.ContentSource = 'Protection probe'
+                    return New-Object PSObject -Property $result
+                }
                 if ($script:LegacyConversionMode -and $canTryOffice) {
                     $conv = Convert-LegacyOfficeToOpenXmlTemp -FilePath $FilePath -AppType Word -TimeoutSec $script:LegacyOfficeTimeoutSec
                     if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
@@ -1957,6 +2383,19 @@ function Get-OfficeContentInfo {
             '.xls' {
                 $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
                 $canTryOffice = $fileInfo -and ($fileInfo.Length -le ($script:LegacyOfficeMaxFileMB * 1MB))
+
+                $probeDecision = Test-ShouldSkipLegacyOfficeByProbe -FilePath $FilePath -AppType Excel
+                if ($probeDecision) {
+                    $result.ProtectionState = [string]$probeDecision.State
+                    $result.ProtectionDetail = [string]$probeDecision.Detail
+                }
+                if ($probeDecision -and $probeDecision.Skip) {
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($probeDecision.Detail) { [string]$probeDecision.Detail } else { [string]$probeDecision.State }
+                    $result.ConversionStatus = 'SkippedByProbe'
+                    $result.ContentSource = 'Protection probe'
+                    return New-Object PSObject -Property $result
+                }
                 if ($script:LegacyConversionMode -and $canTryOffice) {
                     $conv = Convert-LegacyOfficeToOpenXmlTemp -FilePath $FilePath -AppType Excel -TimeoutSec $script:LegacyOfficeTimeoutSec
                     if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
@@ -2001,6 +2440,19 @@ function Get-OfficeContentInfo {
             '.ppt' {
                 $fileInfo = Get-Item -LiteralPath $FilePath -ErrorAction SilentlyContinue
                 $canTryOffice = $fileInfo -and ($fileInfo.Length -le ($script:LegacyOfficeMaxFileMB * 1MB))
+
+                $probeDecision = Test-ShouldSkipLegacyOfficeByProbe -FilePath $FilePath -AppType PowerPoint
+                if ($probeDecision) {
+                    $result.ProtectionState = [string]$probeDecision.State
+                    $result.ProtectionDetail = [string]$probeDecision.Detail
+                }
+                if ($probeDecision -and $probeDecision.Skip) {
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($probeDecision.Detail) { [string]$probeDecision.Detail } else { [string]$probeDecision.State }
+                    $result.ConversionStatus = 'SkippedByProbe'
+                    $result.ContentSource = 'Protection probe'
+                    return New-Object PSObject -Property $result
+                }
                 if ($script:LegacyConversionMode -and $canTryOffice) {
                     $conv = Convert-LegacyOfficeToOpenXmlTemp -FilePath $FilePath -AppType PowerPoint -TimeoutSec ([Math]::Max($script:LegacyOfficeTimeoutSec, 15))
                     if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
@@ -2079,6 +2531,39 @@ function Get-OfficeContentInfo {
                     $result.ContentSource = 'FileHash only'
                 }
             }
+            '.txt' {
+                try {
+                    $rawText = Get-Content -LiteralPath $FilePath -Raw -Encoding UTF8 -ErrorAction Stop
+                }
+                catch {
+                    try {
+                        $rawText = Get-Content -LiteralPath $FilePath -Raw -Encoding Default -ErrorAction Stop
+                    }
+                    catch {
+                        $rawText = ''
+                    }
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($rawText)) {
+                    $plain = Normalize-PlainText $rawText
+                    if (-not [string]::IsNullOrWhiteSpace($plain)) {
+                        $result.ContentHash = Get-TextHash $plain
+                        $result.PreviewText = $plain.Substring(0, [Math]::Min(200, $plain.Length))
+                        $result.ParseStatus = T '解析成功' 'Parsed'
+                        $result.ParseReason = ''
+                        $result.ContentSource = 'Text file'
+                    }
+                    else {
+                        $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                        $result.ParseReason = 'TXT'
+                    }
+                }
+                else {
+                    $result.ParseStatus = T '無法取得內容' 'No content extracted'
+                    $result.ParseReason = 'TXT'
+                }
+            }
+
 
             default {
                 $result.ParseStatus = T '不支援' 'Unsupported'
@@ -2107,6 +2592,7 @@ function Get-ExtensionLabel {
         '.ppt'  { return (T 'PowerPoint 舊版簡報' 'Legacy PowerPoint Presentation') }
         '.rtf'  { return (T 'RTF 文件' 'RTF Document') }
         '.pdf'  { return (T 'PDF 文件' 'PDF Document') }
+        '.txt'  { return (T '文字檔' 'Text File') }
         default { return (T '未知' 'Unknown') }
     }
 }
@@ -2435,8 +2921,12 @@ function Start-Scan {
 
     Update-Status -Status (T '掃描中' 'Scanning') -Summary (T '開始掃描' 'Starting scan')
 
+    if ($script:KillOfficeProcessesBeforeScan) {
+        Stop-OrphanOfficeProcesses -Force
+    }
+
     $files = @()
-    $exts = @('*.docx','*.xlsx','*.pptx','*.doc','*.xls','*.ppt','*.rtf','*.pdf')
+    $exts = @('*.docx','*.xlsx','*.pptx','*.doc','*.xls','*.ppt','*.rtf','*.pdf','*.txt')
 
     foreach ($e in $exts) {
         try {
@@ -2449,7 +2939,7 @@ function Start-Scan {
     $files = $files | Sort-Object FullName -Unique
 
     if (-not $files -or $files.Count -eq 0) {
-        Write-Host (T '找不到支援的 Office 檔案。' 'No supported Office files found.') -ForegroundColor Yellow
+        Write-Host (T '找不到支援的檔案。' 'No supported files found.') -ForegroundColor Yellow
         Write-Host ((T '掃描路徑' 'Scan Root') + ': ' + $script:ScanRoot) -ForegroundColor DarkCyan
         Update-Status -Status (T '失敗' 'Failed') -Summary (T '沒有檔案' 'No files')
         Wait-Return
@@ -2459,6 +2949,7 @@ function Start-Scan {
     Write-Host ((T '掃描路徑' 'Scan Root') + ': ' + $script:ScanRoot) -ForegroundColor Cyan
     Write-Host ((T '總檔案數' 'Total Files') + ': ' + $files.Count) -ForegroundColor Cyan
     Write-Host ''
+    Start-ScanProgressUi
 
     $rows = @()
     $total = $files.Count
@@ -2493,6 +2984,8 @@ function Start-Scan {
             PreviewText   = $contentInfo.PreviewText
             ParseStatus   = $contentInfo.ParseStatus
             ParseReason   = $contentInfo.ParseReason
+            ProtectionState = $contentInfo.ProtectionState
+            ProtectionDetail = $contentInfo.ProtectionDetail
             ContentSource = $contentInfo.ContentSource
             NamingConfidence = $contentInfo.NamingConfidence
             LegacyConverted = $contentInfo.LegacyConverted
@@ -2507,14 +3000,14 @@ function Start-Scan {
 
         $rows += $row
     }
+        Show-ProgressLine -Current $total -Total $total -FileName '' -Force
     }
     finally {
+        Stop-ScanProgressUi
         if ($script:LegacyConversionMode) {
             Close-OfficeInterop
         }
     }
-
-    Write-Progress -Activity (T '掃描中' 'Scanning') -Completed
 
     $rows = Apply-Grouping -Rows $rows
     $rows = Set-PrimaryAndDuplicateRoles -Rows $rows
@@ -2631,6 +3124,7 @@ function Export-HTML {
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ExtensionName) + '</td>')
         [void]$detailRows.AppendLine('<td style="text-align:right">' + (Get-SafeHtml ([string]$r.SizeKB)) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ParseStatus) + '</td>')
+        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ProtectionState) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.DuplicateType) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $roleDisplay) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ContentSource) + '</td>')
@@ -2642,6 +3136,7 @@ function Export-HTML {
         [void]$detailRows.AppendLine('<td class="preview-cell">' + (Get-SafeHtml $r.PreviewText) + '</td>')
         $reasonDisplay = Get-FriendlyParseReason -Reason $r.ParseReason -ConversionStatus $r.ConversionStatus
         [void]$detailRows.AppendLine('<td class="reason-cell">' + (Get-SafeHtml $reasonDisplay) + '</td>')
+        [void]$detailRows.AppendLine('<td class="reason-cell">' + (Get-SafeHtml $r.ProtectionDetail) + '</td>')
         [void]$detailRows.AppendLine('</tr>')
     }
 
@@ -2681,6 +3176,7 @@ function Export-HTML {
     $thType          = New-ThLabelHtml -Zh '類型'       -En 'Type'
     $thSizeKB        = New-ThLabelHtml -Zh '大小(KB)'   -En 'Size (KB)'
     $thStatus        = New-ThLabelHtml -Zh '狀態'       -En 'Status'
+    $thProtection    = New-ThLabelHtml -Zh '保護狀態'   -En 'Protection State'
     $thDupType       = New-ThLabelHtml -Zh '重複判定'   -En 'Duplicate Type'
     $thRole          = New-ThLabelHtml -Zh '角色'       -En 'Role'
     $thSource        = New-ThLabelHtml -Zh '內容來源'   -En 'Content Source'
@@ -2691,6 +3187,7 @@ function Export-HTML {
     $thContentHash   = New-ThLabelHtml -Zh '內容指紋'   -En 'Content Hash'
     $thPreview       = New-ThLabelHtml -Zh '內容預覽'   -En 'Preview Text'
     $thReason        = New-ThLabelHtml -Zh '說明'       -En 'Reason'
+    $thProtectionDetail = New-ThLabelHtml -Zh '保護細節' -En 'Protection Detail'
 	$thComputerName = New-ThLabelHtml -Zh '電腦名稱' -En 'Computer Name'
     $thOS           = New-ThLabelHtml -Zh '作業系統' -En 'Operating System'
     $thUser         = New-ThLabelHtml -Zh '使用者'   -En 'User'
@@ -2730,7 +3227,7 @@ h1{margin:0 0 10px 0;font-size:30px}
 }
 .panel{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:18px;margin-bottom:20px;overflow:visible}
 .table-wrap{width:100%;max-width:100%;overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid #dbe4f0;border-radius:12px;background:#fff}
-.table-wrap table{width:max-content;min-width:1900px;border-collapse:separate;border-spacing:0;table-layout:auto}
+.table-wrap table{width:max-content;min-width:2200px;border-collapse:separate;border-spacing:0;table-layout:auto}
 th,td{border-right:1px solid #dbe4f0;border-bottom:1px solid #dbe4f0;padding:8px 10px;vertical-align:top;text-align:left;font-size:13px;overflow-wrap:anywhere;word-break:break-word;background:#fff}
 th:last-child,td:last-child{border-right:none}
 thead th{position:sticky;top:0;z-index:2;background:#eaf2ff}
@@ -2959,6 +3456,7 @@ window.addEventListener("load", function() {
                     <th>$thContentHash</th>
                     <th>$thPreview</th>
                     <th>$thReason</th>
+<th>$thProtectionDetail</th>
                 </tr>
             </thead>
             <tbody id="detailBody">
