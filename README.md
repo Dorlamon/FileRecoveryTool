@@ -1,4 +1,6 @@
-# Office Recovery Toolkit v5.8.5.2 (LightBar Menu)  
+# Office Recovery Toolkit v5.8.5.2 (LightBar Menu) 
+This utility is designed for scenarios where recovered files have lost their original naming data due to a missing Master File Table (MFT). 
+It serves as an auxiliary tool that extracts file content to perform intelligent renaming.
   
 # Usage:  
 After extracting the files, run:  
@@ -33,15 +35,18 @@ Quality Score evaluation
 Highlight Primary files in HTML with ⭐  
   
 (zh-TW)
-  
-使用方式:  
+# Office Recovery Toolkit v5.8.5.2 (LightBar Menu) 
+這個工具程式是當救援回來的檔名已非原本的檔案名稱，也就是MFT表已遺失時，
+可利用這個程式來擷取檔案內容來智慧命名檔案名稱，可當作輔助工具。
+
+#使用方式:  
 解壓縮後，執行: OfficeRecoveryToolkit.cmd   
   
-必要安裝:  
+#必要安裝:  
 Microsoft Office Word、Excel 及 PowerPoint 2007 檔案格式相容性套件  
 https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
   
-這版包含：  
+#這版包含：  
   
 強化報表功能  
 美化報表樣式  
