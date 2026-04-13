@@ -1,14 +1,14 @@
-# Office Recovery Toolkit v5.8.2 (LightBar Menu)  
+# Office Recovery Toolkit v5.8.5.2 (LightBar Menu)  
   
-Usage:  
+# Usage:  
 After extracting the files, run:  
 OfficeRecoveryToolkit.cmd  
   
-Required Installation  
+# Required Installation  
 Microsoft Office Word, Excel, and PowerPoint 2007 File Format Compatibility Pack  
 https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
   
-Features in This Version  
+# Features in This Version  
 Enhanced reporting functionality  
 Improved report styling  
 LightBar-style interactive menu  
