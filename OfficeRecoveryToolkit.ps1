@@ -1,5 +1,5 @@
 ﻿# ================================
-# Office Recovery Toolkit v5.8.2
+# Office Recovery Toolkit v5.8.5.2
 # PowerShell 5.1 Compatible
 # ================================
 
@@ -22,10 +22,10 @@ $script:LastRenamePreviewCsv = ''
 $script:LastRenamePreviewHtml = ''
 $script:LastRenameLog = ''
 $script:SettingsPath = Join-Path $PSScriptRoot 'OfficeRecoveryToolkit.settings.json'
+$script:NamingMode = 'Smart'
+$script:LastNamingMode = 'Smart'
 
-# -----------------------------
-# Initial Settings
-# -----------------------------
+# v5.4 settings
 $script:OrganizeMode = 'Copy'   # Copy / Move
 $script:OrganizePrimaryOnly = $true
 $script:LegacyQuickMode = $true
@@ -128,6 +128,7 @@ function Save-AppState {
             LastRenamePreviewCsv = $script:LastRenamePreviewCsv
             LastRenamePreviewHtml = $script:LastRenamePreviewHtml
             LastRenameLog = $script:LastRenameLog
+            NamingMode = $script:NamingMode
             LastStatus = $script:LastStatus
             LastSummary = $script:LastSummary
             SavedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
@@ -166,6 +167,7 @@ function Load-AppState {
         if ($cfg.LastRenamePreviewCsv) { $script:LastRenamePreviewCsv = [string]$cfg.LastRenamePreviewCsv }
         if ($cfg.LastRenamePreviewHtml) { $script:LastRenamePreviewHtml = [string]$cfg.LastRenamePreviewHtml }
         if ($cfg.LastRenameLog) { $script:LastRenameLog = [string]$cfg.LastRenameLog }
+        if ($cfg.NamingMode) { $script:NamingMode = [string]$cfg.NamingMode }
         if ($cfg.LastStatus) { $script:LastStatus = [string]$cfg.LastStatus }
         if ($cfg.LastSummary) { $script:LastSummary = [string]$cfg.LastSummary }
     }
@@ -693,7 +695,7 @@ function Draw-Frame {
     }
 
     Write-At 0 0  ('=' * ($w - 1)) Cyan Black
-    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.2 LightBar' 'Office Recovery Analyzer v5.8.2 LightBar') White DarkBlue
+    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.5.2 LightBar' 'Office Recovery Analyzer v5.8.5.2 LightBar') White DarkBlue
     Write-At 2 2  (T '↑↓ 光棒選擇  Enter 執行  數字快速鍵  L 切換語系  Esc 離開' '↑↓ Select  Enter Run  Number hotkeys  L switch language  Esc exit') Gray Black
     Write-At 0 3  ('=' * ($w - 1)) Cyan Black
     return $true
@@ -712,6 +714,7 @@ function Get-MenuItems {
         @{ Key='9'; Text=(T '切換 Copy/Move 模式' 'Toggle Copy/Move Mode'); Action='ToggleMode' },
         @{ Key='0'; Text=(T '切換是否只整理主檔' 'Toggle Primary Only Mode'); Action='TogglePrimaryOnly' },
         @{ Key='C'; Text=(T '切換 Legacy 轉新版' 'Toggle Legacy Convert'); Action='ToggleLegacyConversion' },
+        @{ Key='H'; Text=(T '切換智慧命名模式' 'Toggle Naming Mode'); Action='ToggleNamingMode' },
         @{ Key='L'; Text=(T '切換語系' 'Switch Language'); Action='ToggleLang' },
         @{ Key='Esc'; Text=(T '離開' 'Exit'); Action='Exit' }
     )
@@ -792,6 +795,7 @@ function Draw-SettingsPanel {
         ((T '保留暫存轉檔' 'Keep Temp') + ' : ' + ([string]$script:LegacyKeepTempConverted)),
         ((T '最新改名紀錄' 'Rename Log') + ' : ' + (Get-ShortDisplayText $script:LastRenameLog $valueWidth)),
         ((T '最新整理紀錄' 'Organize Log') + ' : ' + (Get-ShortDisplayText $script:LastOrganizerLog $valueWidth)),
+        ((T '命名模式' 'Naming Mode') + ' : ' + (Get-NamingModeDisplay)),
         ((T '舊檔快速模式' 'Legacy Quick') + ' : ' + ([string]$script:LegacyQuickMode)),
         ((T 'Office 背景解析' 'Office Fallback') + ' : ' + ([string]$script:LegacyOfficeFallback)),
         ((T 'Office 逾時秒數' 'Timeout Sec') + ' : ' + ([string]$script:LegacyOfficeTimeoutSec))
@@ -842,7 +846,7 @@ function Draw-StatusBar {
         ('{0}: {1} | {2}: {3} | {4}: {5}' -f (T '模式' 'Mode'), $script:OrganizeMode, (T '只整理主檔' 'Primary Only'), $script:OrganizePrimaryOnly, (T '語系' 'Language'), $script:Lang),
         ('{0}: {1} | {2}: {3}' -f (T '結果筆數' 'Result Count'), $resultCount, (T '最新狀態' 'Last Status'), (Get-ShortDisplayText $script:LastStatus 45)),
         ('{0}: {1}' -f (T '摘要' 'Summary'), (Get-ShortDisplayText $script:LastSummary 100)),
-        (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / C Legacy轉檔 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / C legacy convert / L language / Esc exit')
+        (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / C Legacy轉檔 / H 命名模式 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / C legacy convert / H naming mode / L language / Esc exit')
     )
 
     $oldLines = @($script:UiCache.StatusLines)
@@ -898,12 +902,17 @@ $script:ProgressUiActive = $false
 $script:ProgressBaseRow = -1
 $script:ProgressLastLine = ''
 $script:ProgressCursorHidden = $false
+$script:ScanCancelRequested = $false
+$script:LastEscPollAt = [datetime]::MinValue
+$script:EscPollIntervalMs = 80
 
 function Start-ScanProgressUi {
     if ($script:ProgressUiActive) { return }
 
     $script:LastProgressRenderAt = [datetime]::MinValue
     $script:ProgressLastLine = ''
+    $script:ScanCancelRequested = $false
+    $script:LastEscPollAt = [datetime]::MinValue
 
     try {
         [Console]::CursorVisible = $false
@@ -952,6 +961,105 @@ function Stop-ScanProgressUi {
     $script:ProgressBaseRow = -1
     $script:ProgressLastLine = ''
     $script:ProgressCursorHidden = $false
+    $script:LastEscPollAt = [datetime]::MinValue
+}
+
+
+function Test-ScanCancelRequested {
+    $now = Get-Date
+    if ((($now - $script:LastEscPollAt).TotalMilliseconds) -lt $script:EscPollIntervalMs) {
+        return $script:ScanCancelRequested
+    }
+    $script:LastEscPollAt = $now
+
+    try {
+        while ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq [ConsoleKey]::Escape) {
+                $script:ScanCancelRequested = $true
+                return $true
+            }
+        }
+    }
+    catch {
+    }
+
+    return $script:ScanCancelRequested
+}
+
+
+function Show-ScanCancelConfirmUi {
+    param(
+        [string]$PromptText
+    )
+
+    try {
+        $raw = $Host.UI.RawUI
+        $origVisible = $raw.CursorSize
+    } catch {
+        $origVisible = $null
+    }
+
+    $yesSelected = $true
+
+    while ($true) {
+        try {
+            $width = [Math]::Max(40, [Console]::WindowWidth)
+            $left = 0
+            $top = [Math]::Max(0, [Console]::CursorTop)
+            if ($script:ProgressUiActive -and $script:ProgressBaseRow -ge 0) {
+                $top = [Math]::Min([Console]::BufferHeight - 2, $script:ProgressBaseRow + 1)
+            }
+
+            [Console]::SetCursorPosition($left, $top)
+            $line1 = $PromptText
+            if ($line1.Length -gt ($width - 1)) { $line1 = $line1.Substring(0, $width - 1) }
+            $line1 = $line1.PadRight($width - 1)
+            Write-Host $line1 -NoNewline -ForegroundColor Yellow
+
+            [Console]::SetCursorPosition($left, [Math]::Min([Console]::BufferHeight - 1, $top + 1))
+            if ($yesSelected) {
+                $line2 = ('[ {0} ]    {1}' -f (T '是 / Y' 'Yes / Y'), (T '否 / N' 'No / N'))
+            } else {
+                $line2 = ('{0}    [ {1} ]' -f (T '是 / Y' 'Yes / Y'), (T '否 / N' 'No / N'))
+            }
+            if ($line2.Length -gt ($width - 1)) { $line2 = $line2.Substring(0, $width - 1) }
+            $line2 = $line2.PadRight($width - 1)
+            Write-Host $line2 -NoNewline -ForegroundColor Cyan
+        } catch {
+            Write-Host ''
+            Write-Host $PromptText -ForegroundColor Yellow
+            Write-Host (T '按 Y 確認中止，按 N 繼續掃描。' 'Press Y to cancel, N to continue.') -ForegroundColor Cyan
+        }
+
+        $key = [Console]::ReadKey($true)
+
+        switch ($key.Key) {
+            'LeftArrow' { $yesSelected = $true; continue }
+            'RightArrow' { $yesSelected = $false; continue }
+            'Y' { return $true }
+            'N' { return $false }
+            'Escape' { return $false }
+            'Enter' { return $yesSelected }
+            default { continue }
+        }
+    }
+}
+
+function Clear-ScanCancelConfirmUi {
+    try {
+        if ($script:ProgressUiActive -and $script:ProgressBaseRow -ge 0) {
+            $width = [Math]::Max(40, [Console]::WindowWidth)
+            $left = 0
+            $top = [Math]::Min([Console]::BufferHeight - 2, $script:ProgressBaseRow + 1)
+            [Console]::SetCursorPosition($left, $top)
+            Write-Host (' ' * ($width - 1)) -NoNewline
+            [Console]::SetCursorPosition($left, [Math]::Min([Console]::BufferHeight - 1, $top + 1))
+            Write-Host (' ' * ($width - 1)) -NoNewline
+            [Console]::SetCursorPosition($left, $script:ProgressBaseRow)
+        }
+    } catch {
+    }
 }
 
 function Show-ProgressLine {
@@ -991,7 +1099,7 @@ function Show-ProgressLine {
         $safeName = $safeName.Substring(0, 55) + '...'
     }
 
-    $line = ('{0} [{1}] {2,3}%  ({3}/{4})  {5}' -f (T '掃描中' 'Scanning'), $bar, $pct, $Current, $Total, $safeName)
+    $line = ('{0} [{1}] {2,3}%  ({3}/{4})  {5}   {6}' -f (T '掃描中' 'Scanning'), $bar, $pct, $Current, $Total, $safeName, (T '按 ESC 可中止掃描' 'Press ESC to cancel scan'))
 
     if ($script:UseNativeProgressBar) {
         Write-Progress -Activity (T '掃描中' 'Scanning') -Status $safeName -PercentComplete $pct
@@ -2089,6 +2197,26 @@ function Toggle-LegacyConversionMode {
     Reset-UiCachesSafe
 }
 
+function Toggle-NamingMode {
+    switch ($script:NamingMode) {
+        'Conservative' { $script:NamingMode = 'Smart' }
+        'Smart' { $script:NamingMode = 'OriginalFirst' }
+        default { $script:NamingMode = 'Conservative' }
+    }
+    $script:LastNamingMode = $script:NamingMode
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary ((T '智慧命名模式已切換為' 'Naming mode switched to') + ': ' + $script:NamingMode)
+    Reset-UiCachesSafe
+}
+
+function Get-NamingModeDisplay {
+    switch ($script:NamingMode) {
+        'Conservative' { return (T '保守命名' 'Conservative') }
+        'OriginalFirst' { return (T '原檔名優先' 'Original First') }
+        default { return (T '智慧命名' 'Smart Naming') }
+    }
+}
+
+
 function Get-NamingConfidence {
     param(
         [string]$ContentSource,
@@ -2709,50 +2837,348 @@ function Set-PrimaryAndDuplicateRoles {
 # -----------------------------
 # Rename helpers
 # -----------------------------
-function Get-SuggestedBaseName {
-    param($Row)
 
-    $ext = $Row.Extension
+function Normalize-PreviewTextForNaming {
+    param([string]$Text)
 
-    if ($ext -eq '.xlsx') {
-        $smart = Get-ExcelSmartName -FilePath $Row.FullPath
-        if (-not [string]::IsNullOrWhiteSpace($smart)) {
-            if (-not [string]::IsNullOrWhiteSpace($Row.LogicalGroup)) {
-                return '{0}_{1}' -f $smart, $Row.LogicalGroup
-            }
-            return $smart
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+
+    $t = [string]$Text
+    $t = $t -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', ' '
+    $t = $t -replace '�', ' '
+    $t = $t -replace '[“”„‟"]', ''
+    $t = $t -replace "[‘’‚‛']", ''
+    $t = $t -replace '[‐‑–—]+', '-'
+    $t = $t -replace '[|¦]+', ' '
+    $t = $t -replace '[\t\r\n]+', "`n"
+    $t = $t -replace '[ ]{2,}', ' '
+    return $t.Trim()
+}
+
+function Test-LooksLikeGarbledText {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $true }
+
+    $t = Normalize-PreviewTextForNaming $Text
+    if ([string]::IsNullOrWhiteSpace($t)) { return $true }
+
+    $len = $t.Length
+    if ($len -lt 3) { return $true }
+
+    $replacementCount = ([regex]::Matches($Text, '�')).Count
+    $goodCount = ([regex]::Matches($t, '[\p{L}\p{N}\u4e00-\u9fff]')).Count
+    $symbolCount = ([regex]::Matches($t, '[^ \p{L}\p{N}\u4e00-\u9fff\-\._:/]')).Count
+
+    if ($replacementCount -ge 2) { return $true }
+    if ($goodCount -lt [Math]::Max(3, [int]($len * 0.25))) { return $true }
+    if ($symbolCount -gt [int]($len * 0.35)) { return $true }
+
+    $lines = $t -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    if (@($lines).Count -gt 0) {
+        $best = $lines | Sort-Object { - (($_ -replace '\s','').Length) } | Select-Object -First 1
+        if ($best -match '^[0-9\W_]+$') { return $true }
+    }
+
+    return $false
+}
+
+function Get-BestNamingLine {
+    param([string]$Text)
+
+    $t = Normalize-PreviewTextForNaming $Text
+    if ([string]::IsNullOrWhiteSpace($t)) { return '' }
+
+    $lines = $t -split "`r?`n" |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -and $_ -notmatch '^(page|sheet|工作表|第\s*\d+\s*頁)\b' }
+
+    if (-not $lines) { return '' }
+
+    $scored = foreach ($line in $lines) {
+        $score = 0
+        $cleanLen = ($line -replace '\s','').Length
+        if ($cleanLen -ge 4) { $score += 3 }
+        if ($line -match '[\u4e00-\u9fffA-Za-z]{3,}') { $score += 4 }
+        if ($line -match '(invoice|report|contract|quotation|quote|statement|resume|meeting|proposal|spec|manual|presentation|agenda|minutes|發票|報告|合約|契約|估價|報價|對帳|履歷|會議|提案|規格|手冊|簡報)') { $score += 5 }
+        if ($line -match '^[0-9\W_]+$') { $score -= 6 }
+        if ($line.Length -gt 80) { $score -= 2 }
+        [pscustomobject]@{
+            Line  = $line
+            Score = $score
+            Len   = $cleanLen
         }
     }
 
-    $text = $Row.PreviewText
+    $pick = $scored | Sort-Object @{Expression='Score';Descending=$true}, @{Expression='Len';Descending=$true} | Select-Object -First 1
+    if ($pick.Score -lt 1) { return '' }
+    return [string]$pick.Line
+}
 
-    if ([string]::IsNullOrWhiteSpace($text)) {
-        return ''
+function Get-NamingDateToken {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+
+    $patterns = @(
+        '\b(20\d{2})[\/\.-](0?[1-9]|1[0-2])[\/\.-](0?[1-9]|[12]\d|3[01])\b',
+        '\b(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])\b',
+        '\b(20\d{2})年\s*(1[0-2]|0?[1-9])月\s*(3[01]|[12]?\d)日?\b',
+        '\b(1[01]\d|0?\d{2})[\/\.-](0?[1-9]|1[0-2])[\/\.-](0?[1-9]|[12]\d|3[01])\b'
+    )
+
+    foreach ($p in $patterns) {
+        $m = [regex]::Match($Text, $p)
+        if ($m.Success) {
+            try {
+                if ($m.Groups[1].Value.Length -le 3) {
+                    $y = [int]$m.Groups[1].Value + 1911
+                } else {
+                    $y = [int]$m.Groups[1].Value
+                }
+                $mo = [int]$m.Groups[2].Value
+                $d = [int]$m.Groups[3].Value
+                $dt = Get-Date -Year $y -Month $mo -Day $d -Hour 0 -Minute 0 -Second 0
+                return $dt.ToString('yyyy-MM-dd')
+            } catch {}
+        }
     }
 
-    $name = $text
-    $name = $name -replace '\s+', ' '
-    $name = $name -replace '^[._\s-]+', ''
-    $name = $name -replace '[._\s-]+$', ''
-    $name = $name -replace 'sheet\d+', ''
-    $name = $name -replace '工作表\d+', ''
-    $name = $name -replace '^[0-9\s]+$', ''
+    return ''
+}
 
-    if ($name.Length -gt 60) {
-        $name = $name.Substring(0, 60)
+function Get-NamingAmountToken {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+
+    $matches = [regex]::Matches($Text, '(?:NT\$|TWD|\$|USD|金額|總計|合計|total|amount)[^\d]{0,8}(\d{1,3}(?:,\d{3})+|\d{4,})', 'IgnoreCase')
+    if ($matches.Count -gt 0) {
+        $num = $matches[0].Groups[1].Value -replace ',', ''
+        if ($num.Length -gt 8) { $num = $num.Substring(0,8) }
+        return $num
     }
 
-    $name = Get-SafeFileName $name
+    return ''
+}
 
-    if ([string]::IsNullOrWhiteSpace($name)) {
-        return ''
+function Get-NamingKeywordToken {
+    param([string]$Text, [string]$Extension)
+
+    $pairs = @(
+        @{ Pattern='invoice|發票'; Value='Invoice' },
+        @{ Pattern='quotation|quote|報價|估價'; Value='Quotation' },
+        @{ Pattern='contract|agreement|合約|契約'; Value='Contract' },
+        @{ Pattern='statement|對帳'; Value='Statement' },
+        @{ Pattern='resume|cv|履歷'; Value='Resume' },
+        @{ Pattern='meeting|minutes|會議紀錄|會議'; Value='Meeting' },
+        @{ Pattern='report|報告'; Value='Report' },
+        @{ Pattern='proposal|提案'; Value='Proposal' },
+        @{ Pattern='spec|specification|規格'; Value='Spec' },
+        @{ Pattern='manual|手冊|說明書'; Value='Manual' },
+        @{ Pattern='presentation|slide|簡報'; Value='Presentation' },
+        @{ Pattern='budget|預算'; Value='Budget' }
+    )
+
+    foreach ($p in $pairs) {
+        if ($Text -match $p.Pattern) { return $p.Value }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($Row.LogicalGroup)) {
-        $name = '{0}_{1}' -f $name, $Row.LogicalGroup
+    switch ($Extension.ToLowerInvariant()) {
+        '.docx' { return 'Document' }
+        '.doc'  { return 'Document' }
+        '.xlsx' { return 'Workbook' }
+        '.xls'  { return 'Workbook' }
+        '.pptx' { return 'Presentation' }
+        '.ppt'  { return 'Presentation' }
+        '.pdf'  { return 'PDF' }
+        '.txt'  { return 'Text' }
+        default { return 'File' }
+    }
+}
+
+function Get-OriginalNameFallback {
+    param($Row)
+
+    $base = [IO.Path]::GetFileNameWithoutExtension([string]$Row.FileName)
+    if ([string]::IsNullOrWhiteSpace($base)) { $base = 'RecoveredFile' }
+    $base = $base -replace '^[\s\._-]+',''
+    $base = $base -replace '[\s\._-]+$',''
+    $base = $base -replace '(?i)^(copy of |copy_|recovered_|document_|scan_)',''
+    $base = Get-SafeFileName $base
+    if ([string]::IsNullOrWhiteSpace($base)) { $base = 'RecoveredFile' }
+    return $base
+}
+
+function Build-SmartNameFromTokens {
+    param(
+        [string]$Keyword,
+        [string]$DateToken,
+        [string]$AmountToken,
+        [string]$TitleToken
+    )
+
+    $parts = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($Keyword)) { $parts += $Keyword }
+    if (-not [string]::IsNullOrWhiteSpace($DateToken)) { $parts += $DateToken }
+    if (-not [string]::IsNullOrWhiteSpace($AmountToken)) { $parts += ('Amt' + $AmountToken) }
+
+    if (-not [string]::IsNullOrWhiteSpace($TitleToken)) {
+        $title = $TitleToken
+        $title = $title -replace '(?i)\b(invoice|report|contract|quotation|statement|resume|meeting|proposal|spec|manual|presentation|document|workbook|text|pdf)\b', ''
+        $title = $title -replace '\s+', ' '
+        $title = $title.Trim()
+        if ($title.Length -gt 28) { $title = $title.Substring(0, 28).Trim() }
+        if ($title) { $parts += $title }
     }
 
-    return $name
+    $parts = @($parts | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $joined = ($parts -join '_')
+    $joined = Get-SafeFileName $joined
+    if ($joined.Length -gt 80) { $joined = $joined.Substring(0,80).Trim(' ','_','-','.') }
+    return $joined
+}
+
+
+function Get-NamingConfidenceScore {
+    param(
+        [string]$Keyword,
+        [string]$DateToken,
+        [string]$AmountToken,
+        [string]$TitleToken,
+        [bool]$LooksBad,
+        [string]$Mode,
+        [string]$FallbackBase
+    )
+
+    $score = 20
+    if (-not [string]::IsNullOrWhiteSpace($Keyword)) { $score += 20 }
+    if (-not [string]::IsNullOrWhiteSpace($DateToken)) { $score += 20 }
+    if (-not [string]::IsNullOrWhiteSpace($AmountToken)) { $score += 15 }
+    if (-not [string]::IsNullOrWhiteSpace($TitleToken)) { $score += 25 }
+    if ($LooksBad) { $score -= 25 }
+
+    switch ($Mode) {
+        'Conservative' { $score -= 5 }
+        'OriginalFirst' { $score -= 10 }
+        default { }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($FallbackBase) -and -not [string]::IsNullOrWhiteSpace($TitleToken) -and ($TitleToken -eq $FallbackBase)) {
+        $score -= 10
+    }
+
+    if ($score -lt 0) { $score = 0 }
+    if ($score -gt 100) { $score = 100 }
+    return [int]$score
+}
+
+function Get-NamingConfidenceLabel {
+    param([int]$Score)
+    if ($Score -ge 80) { return 'High' }
+    if ($Score -ge 55) { return 'Medium' }
+    return 'Low'
+}
+
+function Get-SuggestedBaseNameInfo {
+    param($Row)
+
+    $ext = [string]$Row.Extension
+    $fallback = Get-OriginalNameFallback -Row $Row
+    $mode = [string]$script:NamingMode
+    $baseName = ''
+    $reason = ''
+    $source = ''
+    $keyword = ''
+    $dateToken = ''
+    $amountToken = ''
+    $bestLine = ''
+    $looksBad = $false
+
+    if ($ext -eq '.xlsx') {
+        $excelSmart = Get-ExcelSmartName -FilePath $Row.FullPath
+        if (-not [string]::IsNullOrWhiteSpace($excelSmart)) {
+            $baseName = $excelSmart
+            $reason = 'ExcelSmart'
+            $source = 'Excel'
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($baseName) -and $mode -eq 'OriginalFirst') {
+        $baseName = $fallback
+        $reason = 'OriginalFirst'
+        $source = 'Original'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($baseName)) {
+        $text = Normalize-PreviewTextForNaming ([string]$Row.PreviewText)
+        $looksBad = Test-LooksLikeGarbledText $text
+
+        if (-not $looksBad) {
+            $bestLine = Get-BestNamingLine $text
+            $keyword = Get-NamingKeywordToken -Text $text -Extension $ext
+            $dateToken = Get-NamingDateToken -Text $text
+            $amountToken = Get-NamingAmountToken -Text $text
+        }
+
+        $smart = Build-SmartNameFromTokens -Keyword $keyword -DateToken $dateToken -AmountToken $amountToken -TitleToken $bestLine
+
+        if ($mode -eq 'Conservative') {
+            $tokenCount = 0
+            foreach ($v in @($keyword,$dateToken,$amountToken,$bestLine)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$v)) { $tokenCount++ }
+            }
+            if ($tokenCount -lt 2) {
+                $smart = ''
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($smart)) {
+            $baseName = $smart
+            $reason = 'SmartTokens'
+            $source = 'Content'
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($baseName)) {
+        $baseName = $fallback
+        if ([string]::IsNullOrWhiteSpace($reason)) { $reason = 'FallbackOriginal' }
+        if ([string]::IsNullOrWhiteSpace($source)) { $source = 'Original' }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$Row.LogicalGroup)) {
+        $baseName = '{0}_{1}' -f $baseName, $Row.LogicalGroup
+    }
+
+    $baseName = Get-SafeFileName $baseName
+    if ([string]::IsNullOrWhiteSpace($baseName)) {
+        $baseName = 'RecoveredFile'
+    }
+
+    $score = Get-NamingConfidenceScore -Keyword $keyword -DateToken $dateToken -AmountToken $amountToken -TitleToken $bestLine -LooksBad:$looksBad -Mode $mode -FallbackBase $fallback
+    if ($source -eq 'Original' -and $score -gt 45) { $score = 45 }
+    if ($source -eq 'Excel' -and $score -lt 85) { $score = 85 }
+
+    [pscustomobject]@{
+        BaseName = $baseName
+        Mode = $mode
+        ConfidenceScore = $score
+        ConfidenceLabel = (Get-NamingConfidenceLabel -Score $score)
+        Reason = $reason
+        Source = $source
+        Keyword = $keyword
+        DateToken = $dateToken
+        AmountToken = $amountToken
+        TitleToken = $bestLine
+        LooksGarbled = $looksBad
+    }
+}
+
+function Get-SuggestedBaseName {
+    param($Row)
+    $info = Get-SuggestedBaseNameInfo -Row $Row
+    return [string]$info.BaseName
 }
 
 function Get-UniqueTargetPath {
@@ -2823,8 +3249,10 @@ function Get-RenamePlan {
         $ext = [IO.Path]::GetExtension($row.FullPath)
         $baseName = ''
 
+        $nameInfo = $null
         if ($row.Role -eq 'Primary') {
-            $baseName = Get-SuggestedBaseName -Row $row
+            $nameInfo = Get-SuggestedBaseNameInfo -Row $row
+            $baseName = $nameInfo.BaseName
         }
         elseif ($row.Role -eq 'Duplicate') {
             $group = $row.LogicalGroup
@@ -2842,7 +3270,8 @@ function Get-RenamePlan {
             $baseName = 'DUP_{0}_{1:000}' -f $group, $dupCounters[$group]
         }
         elseif ($row.Role -eq 'Unique') {
-            $baseName = Get-SuggestedBaseName -Row $row
+            $nameInfo = Get-SuggestedBaseNameInfo -Row $row
+            $baseName = $nameInfo.BaseName
         }
         else {
             continue
@@ -2872,6 +3301,10 @@ function Get-RenamePlan {
             LogicalGroup  = $row.LogicalGroup
             DuplicateType = $row.DuplicateType
             Role          = $row.Role
+            NamingMode    = $(if ($nameInfo) { $nameInfo.Mode } else { $script:NamingMode })
+            NamingConfidence = $(if ($nameInfo) { $nameInfo.ConfidenceLabel } else { 'Low' })
+            NamingConfidenceScore = $(if ($nameInfo) { $nameInfo.ConfidenceScore } else { 20 })
+            NamingReason  = $(if ($nameInfo) { $nameInfo.Reason } else { 'DuplicateCounter' })
         })
     }
 
@@ -2963,6 +3396,20 @@ function Start-Scan {
         $f = $files[$i]
         Show-ProgressLine -Current ($i + 1) -Total $total -FileName $f.Name
 
+        if (Test-ScanCancelRequested) {
+            $confirm = Show-ScanCancelConfirmUi -PromptText (T '偵測到 ESC，是否中止掃描？' 'ESC detected. Cancel scan?')
+            Clear-ScanCancelConfirmUi
+
+            if ($confirm) {
+                Update-Status -Status (T '已中止' 'Cancelled') -Summary (T '使用者確認中止掃描。' 'User confirmed cancel.')
+                break
+            }
+            else {
+                $script:ScanCancelRequested = $false
+                Show-ProgressLine -Current ($i + 1) -Total $total -FileName $f.Name
+            }
+        }
+
         $fileHash = ''
         try {
             $fileHash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
@@ -3007,6 +3454,11 @@ function Start-Scan {
         if ($script:LegacyConversionMode) {
             Close-OfficeInterop
         }
+    }
+
+    if ($script:ScanCancelRequested) {
+        Write-Host ''
+        Write-Host (T '已中止掃描。已保留目前已完成的掃描結果。' 'Scan cancelled. Completed results have been kept.') -ForegroundColor Yellow
     }
 
     $rows = Apply-Grouping -Rows $rows
@@ -3446,6 +3898,7 @@ window.addEventListener("load", function() {
                     <th>$thType</th>
                     <th>$thSizeKB</th>
                     <th>$thStatus</th>
+                    <th>$thProtection</th>
                     <th>$thDupType</th>
                     <th>$thRole</th>
                     <th>$thSource</th>
@@ -3456,7 +3909,7 @@ window.addEventListener("load", function() {
                     <th>$thContentHash</th>
                     <th>$thPreview</th>
                     <th>$thReason</th>
-<th>$thProtectionDetail</th>
+                    <th>$thProtectionDetail</th>
                 </tr>
             </thead>
             <tbody id="detailBody">
@@ -3635,6 +4088,9 @@ function New-RenamePreviewDataset {
             SuggestedName  = $suggestedName
             Extension      = $row.Extension
             LogicalGroup   = $row.LogicalGroup
+            NamingMode     = $(if ($plan) { [string]$plan.NamingMode } else { [string]$script:NamingMode })
+            NamingConfidence = $(if ($plan) { [string]$plan.NamingConfidence } else { 'Low' })
+            NamingConfidenceScore = $(if ($plan) { [string]$plan.NamingConfidenceScore } else { '20' })
             Reason         = $reason
             PreviewLine1   = $(if ($previewLines.Count -ge 1) { $previewLines[0] } else { '' })
             PreviewLine2   = $(if ($previewLines.Count -ge 2) { $previewLines[1] } else { '' })
@@ -3649,6 +4105,9 @@ function New-RenamePreviewDataset {
 
 function Preview-RenamePlan {
     Clear-Host
+
+    Write-Host ''
+    Write-Host (T '模擬改名處理中，請稍後...' 'Rename preview in progress, please wait...') -ForegroundColor Cyan
 
     try {
         if (-not $script:Results -or @($script:Results).Count -eq 0) {
@@ -3697,6 +4156,8 @@ function Preview-RenamePlan {
             [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.SuggestedName) + '</td>')
             [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.Extension) + '</td>')
             [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.LogicalGroup) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.NamingMode) + '</td>')
+            [void]$rows.AppendLine('<td>' + (Get-SafeHtml ([string]$p.NamingConfidence + ' (' + [string]$p.NamingConfidenceScore + ')')) + '</td>')
             [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.Reason) + '</td>')
             [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.PreviewLine1) + '</td>')
             [void]$rows.AppendLine('<td>' + (Get-SafeHtml $p.PreviewLine2) + '</td>')
@@ -3738,6 +4199,8 @@ th{min-width:120px}
                     <th>$(Get-SafeHtml (T '建議檔名' 'Suggested Name'))</th>
                     <th>$(Get-SafeHtml (T '副檔名' 'Extension'))</th>
                     <th>$(Get-SafeHtml (T '群組' 'Group'))</th>
+                    <th>$(Get-SafeHtml (T '命名模式' 'Naming Mode'))</th>
+                    <th>$(Get-SafeHtml (T '命名信心' 'Naming Confidence'))</th>
                     <th>$(Get-SafeHtml (T '原因' 'Reason'))</th>
                     <th>$(Get-SafeHtml (T '預覽 1' 'Preview 1'))</th>
                     <th>$(Get-SafeHtml (T '預覽 2' 'Preview 2'))</th>
@@ -3829,6 +4292,9 @@ function Invoke-AutoRename {
                     OriginalName  = $p.OriginalName
                     SuggestedName = $p.SuggestedName
                     Role          = $p.Role
+                    NamingMode    = $p.NamingMode
+                    NamingConfidence = $p.NamingConfidence
+                    NamingConfidenceScore = $p.NamingConfidenceScore
                     Status        = 'Renamed'
                     Reason        = ''
                 })
@@ -3840,6 +4306,9 @@ function Invoke-AutoRename {
                     OriginalName  = $p.OriginalName
                     SuggestedName = $p.SuggestedName
                     Role          = $p.Role
+                    NamingMode    = $p.NamingMode
+                    NamingConfidence = $p.NamingConfidence
+                    NamingConfidenceScore = $p.NamingConfidenceScore
                     Status        = 'Failed'
                     Reason        = $_.Exception.Message
                 })
@@ -4137,6 +4606,12 @@ try {
             continue
         }
 
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'H' -VirtualKeyCode 72 -Chars @('h','H')) {
+            Toggle-NamingMode
+            $needsFullRedraw = $true
+            continue
+        }
+
         if (Test-KeyMatch -KeyInfo $key -KeyName 'L' -VirtualKeyCode 76 -Chars @('l','L')) {
             if ($script:Lang -eq 'zh-TW') {
                 $script:Lang = 'en-US'
@@ -4218,6 +4693,11 @@ try {
             }
             'ToggleLegacyConversion' {
                 Toggle-LegacyConversionMode
+                $needsFullRedraw = $true
+                continue
+            }
+            'ToggleNamingMode' {
+                Toggle-NamingMode
                 $needsFullRedraw = $true
                 continue
             }

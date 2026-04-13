@@ -1,4 +1,4 @@
-Office File Recovery & Analysis Tool v5.8.2 – User Guide
+Office File Recovery & Analysis Tool v5.8.5.2 – User Guide
 
 Press L to switch language
 Press 0 to toggle “Primary files only” mode
