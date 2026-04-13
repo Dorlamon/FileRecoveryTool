@@ -1,4 +1,4 @@
-# Office Recovery Toolkit v5.8 (LightBar Menu)  
+# Office Recovery Toolkit v5.8.2 (LightBar Menu)  
   
 Usage:  
 After extracting the files, run:  
@@ -12,7 +12,7 @@ Features in This Version
 Enhanced reporting functionality  
 Improved report styling  
 LightBar-style interactive menu  
-Supports scanning: docx / xlsx / pptx / doc / xls  
+Supports scanning: docx / xlsx / pptx / doc / xls / ppt / rtf / pdf / txt  
 zh-TW locale displays Traditional Chinese UI; other locales display English (manual toggle supported)  
 Duplicate file detection using SHA256 hash  
 File content fingerprint comparison  
@@ -46,7 +46,7 @@ https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe
 強化報表功能  
 美化報表樣式  
 選單改成光棒版本    
-掃描 docx/xlsx/pptx/doc/xls  
+掃描 docx/xlsx/pptx/doc/xls/ppt/rtf/pdf/txt  
 zh-TW 語系顯示繁體中文介面，其它語系顯示英文介面 (可手動切換)  
 使用 SHA256 雜湊值去重複檔案  
 檔案內容指紋比對  
