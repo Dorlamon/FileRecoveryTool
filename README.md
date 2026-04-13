@@ -1,4 +1,4 @@
-# Office Recovery Toolkit v5.8.5.6 (LightBar Menu) 
+# Office Recovery Toolkit v5.8.5.8 (LightBar Menu) 
 This utility is designed for scenarios where recovered files have lost their original naming data
 due to a missing Master File Table (MFT).   
 It serves as an auxiliary tool that extracts file content to perform intelligent renaming.
@@ -8,19 +8,20 @@ After extracting the files, run:
 OfficeRecoveryToolkit.cmd 
 
 # SHA256:  
-2FD96AC969292CB1C14609F146DB99DC6F945C05D418F920C728981E5D2C389C  
-  
+E064ABF26717A52C57942841016E221FC4427C2A058C7A0DD5243EFFE973519A   
+
+# System Required  
+Support Windows 10 / 11 (PowerShell 5.1)  
+
 # Required Installation  
 Microsoft Office Word, Excel, and PowerPoint 2007 File Format Compatibility Pack  
 https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
 
-# New in Version 5.8.5.6:  
-Pre-processing: Display "Calculating files, please wait..." before renaming begins.  
-Progress Tracking: Full progress bar for the actual renaming process.  
-Interruption: Press ESC to abort and trigger a UI confirmation prompt.  
-Reporting: Export an "Aborted Task Report" if the process is cancelled.  
-Visuals: Generate a color-coded HTML report for actual renaming results.  
-Integration: Dashboard PRO integrated into the main menu.  
+# New in Version 5.8.5.8:  
+New Features & Improvements
+Encrypted File Support: Added the ability to detect and handle encrypted .pdf and .rtf formats.  
+Enhanced UI: Upgraded the Scanning Progress Bar to the new PRO display style.  
+Unified Visuals: The Renaming Progress Bar now utilizes the same PRO display interface for a consistent experience.  
   
 # Features in This Version  
 Enhanced reporting functionality  
@@ -55,19 +56,19 @@ Highlight Primary files in HTML with ⭐
 解壓縮後，執行: OfficeRecoveryToolkit.cmd
 
 # SHA256:  
-2FD96AC969292CB1C14609F146DB99DC6F945C05D418F920C728981E5D2C389C  
-  
+E064ABF26717A52C57942841016E221FC4427C2A058C7A0DD5243EFFE973519A   
+
+# 系統需求    
+支援 Windows 10 / 11 (PowerShell 5.1)  
+
 # 必要安裝:  
 Microsoft Office Word、Excel 及 PowerPoint 2007 檔案格式相容性套件  
 https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
 
-# v5.8.5.6 這版新增的功能是：  
-實際改名前先顯示「檔案計算中，請稍後...」  
-實際改名有完整進度列  
-ESC 可中止並跳 UI 確認  
-中止後輸出中止報表  
-彩色實際改名 HTML 報表  
-Dashboard PRO 整合主選單  
+# v5.8.5.8 這版新增的功能是：  
+支援判斷加密的 .pdf 和 .rtf 格式  
+掃描進度列升級為 PRO 顯示 
+實際改名進度列也套用同一套 PRO 顯示。  
   
 # 這版包含：  
   
