@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 internal static class Program
 {
@@ -87,6 +88,8 @@ internal static class Program
             ".xls" => ProbeLegacyXls(path),
             ".doc" => ProbeLegacyDoc(path),
             ".ppt" => ProbeLegacyPpt(path),
+            ".pdf" => ProbePdf(path),
+            ".rtf" => ProbeRtf(path),
             _ => new ProbeResult
             {
                 Path = path,
@@ -163,6 +166,7 @@ internal static class Program
                 {
                     return Corrupt(path, "Invalid BIFF record size");
                 }
+
                 ms.Position += size;
             }
 
@@ -317,6 +321,186 @@ internal static class Program
         }
     }
 
+    private static ProbeResult ProbePdf(string path)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Length < 8)
+            {
+                return Corrupt(path, "PDF file is too small");
+            }
+
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var br = new BinaryReader(fs);
+
+            byte[] headerBytes = br.ReadBytes(8);
+            string header = Encoding.ASCII.GetString(headerBytes);
+            if (!header.StartsWith("%PDF-", StringComparison.Ordinal))
+            {
+                return Corrupt(path, "Not a valid PDF header");
+            }
+
+            const int tailWindowSize = 1024 * 1024;
+            const int fullScanThreshold = 32 * 1024 * 1024;
+
+            bool encrypted;
+            if (fs.Length <= fullScanThreshold)
+            {
+                fs.Position = 0;
+                byte[] allBytes = br.ReadBytes((int)fs.Length);
+                encrypted = ContainsPdfEncryptMarker(allBytes);
+            }
+            else
+            {
+                long tailSize = Math.Min(tailWindowSize, fs.Length);
+                fs.Position = fs.Length - tailSize;
+                byte[] tailBytes = br.ReadBytes((int)tailSize);
+                encrypted = ContainsPdfEncryptMarker(tailBytes);
+
+                if (!encrypted)
+                {
+                    fs.Position = 0;
+                    int headSize = (int)Math.Min(256 * 1024, fs.Length);
+                    byte[] headBytes = br.ReadBytes(headSize);
+                    encrypted = ContainsPdfEncryptMarker(headBytes);
+                }
+            }
+
+            return new ProbeResult
+            {
+                Path = path,
+                Extension = ".pdf",
+                State = encrypted ? "Encrypted" : "NotProtected",
+                Detail = encrypted
+                    ? "PDF security dictionary marker detected (/Encrypt or /Filter /Standard)"
+                    : "No PDF encryption marker detected",
+                ExitCode = encrypted ? (int)ProbeExitCode.Encrypted : (int)ProbeExitCode.NotProtected,
+                CanOpenSafely = !encrypted,
+                CanConvertSafely = !encrypted,
+            };
+        }
+        catch (Exception ex)
+        {
+            return Error(path, ex.Message);
+        }
+    }
+
+    private static bool ContainsPdfEncryptMarker(byte[] data)
+    {
+        if (data == null || data.Length == 0)
+        {
+            return false;
+        }
+
+        string text = Encoding.ASCII.GetString(data);
+        if (text.IndexOf("/Encrypt", StringComparison.Ordinal) >= 0)
+        {
+            return true;
+        }
+
+        if (text.IndexOf("/Filter/Standard", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            text.IndexOf("/Filter /Standard", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static ProbeResult ProbeRtf(string path)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var sr = new StreamReader(fs, encoding: Encoding.ASCII, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: false);
+
+            char[] buffer = new char[8192];
+            int read = sr.ReadBlock(buffer, 0, buffer.Length);
+            if (read <= 0)
+            {
+                return Corrupt(path, "RTF file is empty or unreadable");
+            }
+
+            string head = new string(buffer, 0, read);
+            if (head.IndexOf(@"{\rtf", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return Corrupt(path, "Not a valid RTF header");
+            }
+
+            string sampleText = ReadRtfSample(path, maxChars: 512 * 1024);
+
+            if (ContainsRtfControlWord(sampleText, "password"))
+            {
+                return new ProbeResult
+                {
+                    Path = path,
+                    Extension = ".rtf",
+                    State = "Encrypted",
+                    Detail = "RTF password control word detected",
+                    ExitCode = (int)ProbeExitCode.Encrypted,
+                    CanOpenSafely = false,
+                    CanConvertSafely = false,
+                };
+            }
+
+            if (ContainsRtfControlWord(sampleText, "readprot") ||
+                ContainsRtfControlWord(sampleText, "protlevel") ||
+                ContainsRtfControlWord(sampleText, "formprot") ||
+                ContainsRtfControlWord(sampleText, "annotprot") ||
+                ContainsRtfControlWord(sampleText, "revprot"))
+            {
+                return new ProbeResult
+                {
+                    Path = path,
+                    Extension = ".rtf",
+                    State = "PossiblyProtected",
+                    Detail = "RTF protection control word detected",
+                    ExitCode = (int)ProbeExitCode.PossiblyProtected,
+                    CanOpenSafely = false,
+                    CanConvertSafely = false,
+                };
+            }
+
+            return new ProbeResult
+            {
+                Path = path,
+                Extension = ".rtf",
+                State = "NotProtected",
+                Detail = "No RTF password/protection control word detected",
+                ExitCode = (int)ProbeExitCode.NotProtected,
+                CanOpenSafely = true,
+                CanConvertSafely = true,
+            };
+        }
+        catch (Exception ex)
+        {
+            return Error(path, ex.Message);
+        }
+    }
+
+    private static string ReadRtfSample(string path, int maxChars)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var sr = new StreamReader(fs, encoding: Encoding.ASCII, detectEncodingFromByteOrderMarks: true, bufferSize: 8192, leaveOpen: false);
+        char[] buffer = new char[maxChars];
+        int read = sr.ReadBlock(buffer, 0, buffer.Length);
+        return new string(buffer, 0, read);
+    }
+
+    private static bool ContainsRtfControlWord(string text, string controlWord)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(controlWord))
+        {
+            return false;
+        }
+
+        return Regex.IsMatch(
+            text,
+            @"\\" + Regex.Escape(controlWord) + @"(?=[^A-Za-z]|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
     private static ProbeResult Corrupt(string path, string detail) => new()
     {
         Path = path,
@@ -354,6 +538,7 @@ internal static class Program
                 Console.Error.WriteLine(result.Detail);
             }
         }
+
         return result.ExitCode;
     }
 
@@ -392,10 +577,6 @@ internal static class Program
         private readonly int _sectorSize;
         private readonly int _miniSectorSize;
         private readonly int _miniStreamCutoff;
-        private readonly int _firstMiniFatSector;
-        private readonly int _miniFatSectorCount;
-        private readonly int _firstDifatSector;
-        private readonly int _difatSectorCount;
         private readonly uint[] _fat;
         private readonly uint[] _miniFat;
         private readonly byte[] _miniStream;
@@ -404,19 +585,22 @@ internal static class Program
         private const uint EndOfChain = 0xFFFFFFFE;
         private const uint FreeSector = 0xFFFFFFFF;
 
-        private CompoundFile(FileStream stream, BinaryReader reader, int sectorSize, int miniSectorSize,
-            int miniStreamCutoff, int firstMiniFatSector, int miniFatSectorCount, int firstDifatSector,
-            int difatSectorCount, uint[] fat, uint[] miniFat, byte[] miniStream, List<DirEntry> dirs)
+        private CompoundFile(
+            FileStream stream,
+            BinaryReader reader,
+            int sectorSize,
+            int miniSectorSize,
+            int miniStreamCutoff,
+            uint[] fat,
+            uint[] miniFat,
+            byte[] miniStream,
+            List<DirEntry> dirs)
         {
             _stream = stream;
             _reader = reader;
             _sectorSize = sectorSize;
             _miniSectorSize = miniSectorSize;
             _miniStreamCutoff = miniStreamCutoff;
-            _firstMiniFatSector = firstMiniFatSector;
-            _miniFatSectorCount = miniFatSectorCount;
-            _firstDifatSector = firstDifatSector;
-            _difatSectorCount = difatSectorCount;
             _fat = fat;
             _miniFat = miniFat;
             _miniStream = miniStream;
@@ -480,6 +664,7 @@ internal static class Program
                             difat.Add(sec);
                         }
                     }
+
                     nextDifat = BitConverter.ToUInt32(sectorBytes, sectorSize - 4);
                 }
 
@@ -497,6 +682,7 @@ internal static class Program
                         fatEntries.Add(BitConverter.ToUInt32(sectorBytes, i));
                     }
                 }
+
                 uint[] fat = fatEntries.ToArray();
 
                 byte[] dirBytes = ReadChain(stream, sectorSize, fat, firstDirSector);
@@ -524,8 +710,7 @@ internal static class Program
                     }
                 }
 
-                return new CompoundFile(stream, reader, sectorSize, miniSectorSize, miniStreamCutoff,
-                    firstMiniFatSector, miniFatSectorCount, firstDifatSector, difatSectorCount, fat, miniFat, miniStream, dirs);
+                return new CompoundFile(stream, reader, sectorSize, miniSectorSize, miniStreamCutoff, fat, miniFat, miniStream, dirs);
             }
             catch
             {
@@ -534,7 +719,8 @@ internal static class Program
             }
         }
 
-        public bool HasStream(string name) => _dirs.Any(d => d.Type == 2 && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
+        public bool HasStream(string name) =>
+            _dirs.Any(d => d.Type == 2 && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
 
         public byte[]? TryGetStream(string name)
         {
@@ -574,16 +760,19 @@ internal static class Program
                 {
                     throw new CompoundFileException("Mini FAT chain loop detected");
                 }
+
                 int offset = checked((int)sector * _miniSectorSize);
                 if (offset < 0 || offset + _miniSectorSize > _miniStream.Length)
                 {
                     throw new CompoundFileException("Mini sector offset out of range");
                 }
+
                 ms.Write(_miniStream, offset, _miniSectorSize);
                 if (sector >= _miniFat.Length)
                 {
                     throw new CompoundFileException("Mini FAT index out of range");
                 }
+
                 sector = _miniFat[sector];
             }
 
@@ -592,6 +781,7 @@ internal static class Program
             {
                 Array.Resize(ref data, expectedLength);
             }
+
             return data;
         }
 
@@ -606,11 +796,13 @@ internal static class Program
                 {
                     name = Encoding.Unicode.GetString(bytes, offset, nameLen - 2).TrimEnd('\0');
                 }
+
                 byte type = bytes[offset + 66];
                 uint startSector = BitConverter.ToUInt32(bytes, offset + 116);
                 ulong size = BitConverter.ToUInt64(bytes, offset + 120);
                 dirs.Add(new DirEntry(name, type, startSector, size));
             }
+
             return dirs;
         }
 
@@ -629,6 +821,7 @@ internal static class Program
             {
                 throw new CompoundFileException("Unable to read full sector");
             }
+
             return buffer;
         }
 
@@ -644,18 +837,22 @@ internal static class Program
                 {
                     throw new CompoundFileException("FAT chain loop detected");
                 }
+
                 ms.Write(ReadSector(stream, sectorSize, sector));
                 if (sector >= fat.Length)
                 {
                     throw new CompoundFileException("FAT index out of range");
                 }
+
                 sector = fat[sector];
             }
+
             var data = ms.ToArray();
             if (expectedLength.HasValue && expectedLength.Value < data.Length)
             {
                 Array.Resize(ref data, expectedLength.Value);
             }
+
             return data;
         }
 
