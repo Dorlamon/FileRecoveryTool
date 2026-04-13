@@ -1,32 +1,44 @@
 WHAT'S NEW
 
 (en-US)
+-------------------------------------------------------------------------------------------
+New in Version 5.8.5.6:
+
+Pre-processing: Display "Calculating files, please wait..." before renaming begins.
+Progress Tracking: Full progress bar for the actual renaming process.
+Interruption: Press ESC to abort and trigger a UI confirmation prompt.
+Reporting: Export an "Aborted Task Report" if the process is cancelled.
+Visuals: Generate a color-coded HTML report for actual renaming results.
+Integration: Dashboard PRO integrated into the main menu.
+
+-------------------------------------------------------------------------------------------
 New Rules in Version 5.8.5.3:
 
 Scope: Applies only to .xls and .xlsx files.
-
 Detection Logic: If the content contains "Roster" characteristic fields, such as:
 
 Name
-
 Date
-
 ID No / ID Number / ID Card Number
-
 Naming Priority: If at least two categories of these characteristics are detected, the suggested filename (in both Simulation and Actual modes) will be prioritized as: Roster.
-
 Date Integration: If a recognizable date is found within the content, it will follow the format: Roster_2025-04-13.
-
 Improvements in this version:
-
 .xlsx handling: Logic now evaluates both the Sheet Name and the Sheet Content.
-
 .xls handling: Logic evaluates the PreviewText extracted during the initial scan.
-
 Confidence Score: I have increased the naming confidence score for this detection type, ensuring the report clearly identifies these as high-confidence results.
 
 
 (zh-TW)
+-------------------------------------------------------------------------------------------
+v5.8.5.6 這版新增的功能是：
+實際改名前先顯示「檔案計算中，請稍後...」
+實際改名有完整進度列
+ESC 可中止並跳 UI 確認
+中止後輸出中止報表
+彩色實際改名 HTML 報表
+Dashboard PRO 整合主選單
+
+-------------------------------------------------------------------------------------------
 v5.8.5.3 這版新增的規則是：
 
 只對 .xls / .xlsx 生效

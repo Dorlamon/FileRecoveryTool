@@ -1,5 +1,5 @@
 ﻿# ================================
-# Office Recovery Toolkit v5.8.5.3.3
+# Office Recovery Toolkit v5.8.5.6
 # PowerShell 5.1 Compatible
 # ================================
 
@@ -21,11 +21,16 @@ $script:LastCsvReport = ''
 $script:LastRenamePreviewCsv = ''
 $script:LastRenamePreviewHtml = ''
 $script:LastRenameLog = ''
+$script:LastRenameHtmlReport = ''
+$script:LastDashboardHtmlReport = ''
+$script:LastDashboardProReport = ''
 $script:SettingsPath = Join-Path $PSScriptRoot 'OfficeRecoveryToolkit.settings.json'
 $script:NamingMode = 'Smart'
 $script:LastNamingMode = 'Smart'
 
-# v5.4 settings
+# -----------------------------
+# Initial Settings
+# -----------------------------
 $script:OrganizeMode = 'Copy'   # Copy / Move
 $script:OrganizePrimaryOnly = $true
 $script:LegacyQuickMode = $true
@@ -128,6 +133,9 @@ function Save-AppState {
             LastRenamePreviewCsv = $script:LastRenamePreviewCsv
             LastRenamePreviewHtml = $script:LastRenamePreviewHtml
             LastRenameLog = $script:LastRenameLog
+            LastRenameHtmlReport = $script:LastRenameHtmlReport
+            LastDashboardHtmlReport = $script:LastDashboardHtmlReport
+            LastDashboardProReport = $script:LastDashboardProReport
             NamingMode = $script:NamingMode
             LastStatus = $script:LastStatus
             LastSummary = $script:LastSummary
@@ -167,6 +175,9 @@ function Load-AppState {
         if ($cfg.LastRenamePreviewCsv) { $script:LastRenamePreviewCsv = [string]$cfg.LastRenamePreviewCsv }
         if ($cfg.LastRenamePreviewHtml) { $script:LastRenamePreviewHtml = [string]$cfg.LastRenamePreviewHtml }
         if ($cfg.LastRenameLog) { $script:LastRenameLog = [string]$cfg.LastRenameLog }
+        if ($cfg.LastRenameHtmlReport) { $script:LastRenameHtmlReport = [string]$cfg.LastRenameHtmlReport }
+        if ($cfg.LastDashboardHtmlReport) { $script:LastDashboardHtmlReport = [string]$cfg.LastDashboardHtmlReport }
+        if ($cfg.LastDashboardProReport) { $script:LastDashboardProReport = [string]$cfg.LastDashboardProReport }
         if ($cfg.NamingMode) { $script:NamingMode = [string]$cfg.NamingMode }
         if ($cfg.LastStatus) { $script:LastStatus = [string]$cfg.LastStatus }
         if ($cfg.LastSummary) { $script:LastSummary = [string]$cfg.LastSummary }
@@ -695,7 +706,7 @@ function Draw-Frame {
     }
 
     Write-At 0 0  ('=' * ($w - 1)) Cyan Black
-    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.5.3 LightBar' 'Office Recovery Analyzer v5.8.5.3 LightBar') White DarkBlue
+    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.5.6 LightBar' 'Office File Recovery Analyzer v5.8.5.6 LightBar') White DarkBlue
     Write-At 2 2  (T '↑↓ 光棒選擇  Enter 執行  數字快速鍵  L 切換語系  Esc 離開' '↑↓ Select  Enter Run  Number hotkeys  L switch language  Esc exit') Gray Black
     Write-At 0 3  ('=' * ($w - 1)) Cyan Black
     return $true
@@ -715,6 +726,7 @@ function Get-MenuItems {
         @{ Key='0'; Text=(T '切換是否只整理主檔' 'Toggle Primary Only Mode'); Action='TogglePrimaryOnly' },
         @{ Key='C'; Text=(T '切換 Legacy 轉新版' 'Toggle Legacy Convert'); Action='ToggleLegacyConversion' },
         @{ Key='H'; Text=(T '切換智慧命名模式' 'Toggle Naming Mode'); Action='ToggleNamingMode' },
+        @{ Key='D'; Text=(T '產生 Dashboard PRO' 'Generate Dashboard PRO'); Action='DashboardPro' },
         @{ Key='L'; Text=(T '切換語系' 'Switch Language'); Action='ToggleLang' },
         @{ Key='Esc'; Text=(T '離開' 'Exit'); Action='Exit' }
     )
@@ -794,6 +806,7 @@ function Draw-SettingsPanel {
         ((T 'Legacy 轉新版' 'Legacy Convert') + ' : ' + ([string]$script:LegacyConversionMode)),
         ((T '保留暫存轉檔' 'Keep Temp') + ' : ' + ([string]$script:LegacyKeepTempConverted)),
         ((T '最新改名紀錄' 'Rename Log') + ' : ' + (Get-ShortDisplayText $script:LastRenameLog $valueWidth)),
+        ((T '最新 Dashboard' 'Dashboard') + ' : ' + (Get-ShortDisplayText $script:LastDashboardProReport $valueWidth)),
         ((T '最新整理紀錄' 'Organize Log') + ' : ' + (Get-ShortDisplayText $script:LastOrganizerLog $valueWidth)),
         ((T '命名模式' 'Naming Mode') + ' : ' + (Get-NamingModeDisplay)),
         ((T '舊檔快速模式' 'Legacy Quick') + ' : ' + ([string]$script:LegacyQuickMode)),
@@ -846,7 +859,7 @@ function Draw-StatusBar {
         ('{0}: {1} | {2}: {3} | {4}: {5}' -f (T '模式' 'Mode'), $script:OrganizeMode, (T '只整理主檔' 'Primary Only'), $script:OrganizePrimaryOnly, (T '語系' 'Language'), $script:Lang),
         ('{0}: {1} | {2}: {3}' -f (T '結果筆數' 'Result Count'), $resultCount, (T '最新狀態' 'Last Status'), (Get-ShortDisplayText $script:LastStatus 45)),
         ('{0}: {1}' -f (T '摘要' 'Summary'), (Get-ShortDisplayText $script:LastSummary 100)),
-        (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / C Legacy轉檔 / H 命名模式 / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / C legacy convert / H naming mode / L language / Esc exit')
+        (T '熱鍵：↑↓ 選擇 / Enter 執行 / 數字快速鍵 / C Legacy轉檔 / H 命名模式 / D Dashboard / L 語系 / Esc 離開' 'Hotkeys: ↑↓ select / Enter run / numbers / C legacy convert / H naming mode / D dashboard / L language / Esc exit')
     )
 
     $oldLines = @($script:UiCache.StatusLines)
@@ -1139,6 +1152,101 @@ function Show-ProgressLine {
 
     $script:ProgressLastLine = $render
 }
+
+function Show-TaskProgressLine {
+    param(
+        [string]$Label,
+        [int]$Current,
+        [int]$Total,
+        [string]$FileName,
+        [string]$Hint,
+        [string]$ExtraStatus,
+        [switch]$Force
+    )
+
+    if (-not $script:ProgressUiActive) {
+        Start-ScanProgressUi
+    }
+
+    $now = Get-Date
+    if (-not $Force) {
+        $elapsed = ($now - $script:LastProgressRenderAt).TotalMilliseconds
+        if ($elapsed -lt $script:ProgressRefreshMs -and $Current -lt $Total) {
+            return
+        }
+    }
+    $script:LastProgressRenderAt = $now
+
+    $barWidth = 32
+    if ($Total -gt 0) {
+        $pct = [Math]::Floor(($Current * 100) / $Total)
+    } else {
+        $pct = 0
+    }
+
+    $filled = [Math]::Floor(($pct * $barWidth) / 100)
+    $empty = $barWidth - $filled
+    $bar = ('█' * $filled) + ('░' * $empty)
+
+    $safeName = if ([string]::IsNullOrWhiteSpace($FileName)) { '' } else { $FileName }
+    if ($safeName.Length -gt 46) {
+        $safeName = $safeName.Substring(0, 43) + '...'
+    }
+
+    $parts = @()
+    $parts += ('{0} [{1}] {2,3}%  ({3}/{4})' -f $Label, $bar, $pct, $Current, $Total)
+    if (-not [string]::IsNullOrWhiteSpace($safeName)) {
+        $parts += $safeName
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExtraStatus)) {
+        $parts += $ExtraStatus
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Hint)) {
+        $parts += $Hint
+    }
+
+    $line = ($parts -join '   ')
+
+    if ($script:UseNativeProgressBar) {
+        Write-Progress -Activity $Label -Status $safeName -PercentComplete $pct
+    }
+
+    try {
+        $width = [Console]::BufferWidth
+        if ($width -lt 20) { $width = 120 }
+    }
+    catch {
+        $width = 120
+    }
+
+    if ($line.Length -gt ($width - 1)) {
+        $line = $line.Substring(0, [Math]::Max(1, $width - 1))
+    }
+
+    $padLen = [Math]::Max(0, $width - $line.Length - 1)
+    $render = $line + (' ' * $padLen)
+
+    if (-not $Force -and $render -eq $script:ProgressLastLine -and $Current -lt $Total) {
+        return
+    }
+
+    try {
+        if ($script:ProgressBaseRow -ge 0) {
+            [Console]::SetCursorPosition(0, $script:ProgressBaseRow)
+            [Console]::Write($render)
+        }
+        else {
+            [Console]::Write("`r$render")
+        }
+    }
+    catch {
+        [Console]::Write("`r$render")
+    }
+
+    $script:ProgressLastLine = $render
+}
+
+
 
 # -----------------------------
 # Hash / Content
@@ -4027,6 +4135,248 @@ window.addEventListener("load", function() {
     Wait-Return
 }
 
+
+function Get-StatusBadgeClass {
+    param([string]$Status)
+    switch (($Status + '').ToLowerInvariant()) {
+        'renamed'   { return 'ok' }
+        'success'   { return 'ok' }
+        'ok'        { return 'ok' }
+        'failed'    { return 'fail' }
+        'error'     { return 'fail' }
+        'cancelled' { return 'cancel' }
+        'stopped'   { return 'cancel' }
+        default     { return 'other' }
+    }
+}
+
+function Export-ActualRenameHtmlReport {
+    param(
+        [Parameter(Mandatory=$true)][array]$Rows,
+        [Parameter(Mandatory=$true)][string]$OutputPath,
+        [string]$Title,
+        [string]$RunState = 'Completed',
+        [int]$ProcessedCount = 0,
+        [int]$TotalCount = 0
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Title)) {
+        $Title = T '實際自動改檔名報表' 'Actual Auto Rename Report'
+    }
+
+    $total = @($Rows).Count
+    $ok = @($Rows | Where-Object { $_.Status -in @('Renamed','Success','OK') }).Count
+    $fail = @($Rows | Where-Object { $_.Status -in @('Failed','Error') }).Count
+    $cancel = @($Rows | Where-Object { $_.Status -in @('Cancelled','Stopped') }).Count
+    $generated = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+
+    $rowHtml = New-Object System.Text.StringBuilder
+    foreach ($r in @($Rows)) {
+        $statusClass = Get-StatusBadgeClass ([string]$r.Status)
+        [void]$rowHtml.AppendLine('<tr>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.OriginalName) + '</td>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.SuggestedName) + '</td>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.Role) + '</td>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.NamingMode) + '</td>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.NamingConfidence) + '</td>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.NamingConfidenceScore) + '</td>')
+        [void]$rowHtml.AppendLine('<td><span class="badge ' + $statusClass + '">' + (Get-SafeHtml $r.Status) + '</span></td>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.Reason) + '</td>')
+        [void]$rowHtml.AppendLine('<td>' + (Get-SafeHtml $r.OriginalPath) + '</td>')
+        [void]$rowHtml.AppendLine('</tr>')
+    }
+
+    $titleHtml = Get-SafeHtml $Title
+    $runStateHtml = Get-SafeHtml $RunState
+    $html = @"
+<!doctype html>
+<html lang="$($script:Lang)">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>$titleHtml</title>
+<style>
+body{font-family:"Microsoft JhengHei","Segoe UI",Arial,sans-serif;background:#f5f7fb;color:#243447;margin:0;padding:24px}
+.wrap{max-width:1480px;margin:0 auto}
+h1{margin:0 0 8px 0;font-size:28px}
+.sub{color:#6b7280;margin-bottom:18px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+.card{background:#fff;border:1px solid #d9e1ea;border-radius:12px;padding:14px 18px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.card .k{font-size:12px;color:#6b7280}
+.card .v{font-size:24px;font-weight:700;margin-top:4px}
+.table-wrap{background:#fff;border:1px solid #d9e1ea;border-radius:12px;overflow:auto;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+table{border-collapse:collapse;width:100%}
+th,td{padding:10px 12px;border-bottom:1px solid #eef2f7;text-align:left;vertical-align:top}
+th{background:#1f4e79;color:#fff;position:sticky;top:0;z-index:2}
+tr:nth-child(even) td{background:#fafcff}
+.badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700}
+.badge.ok{background:#dcfce7;color:#166534}
+.badge.fail{background:#fee2e2;color:#991b1b}
+.badge.cancel{background:#fef3c7;color:#92400e}
+.badge.other{background:#e5e7eb;color:#374151}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>$titleHtml</h1>
+  <div class="sub">$(Get-SafeHtml (T '產生時間' 'Generated')) : $generated &nbsp; | &nbsp; $(Get-SafeHtml (T '執行狀態' 'Run State')) : $runStateHtml &nbsp; | &nbsp; $(Get-SafeHtml (T '處理進度' 'Progress')) : $ProcessedCount / $TotalCount</div>
+  <div class="cards">
+    <div class="card"><div class="k">$(Get-SafeHtml (T '記錄筆數' 'Logged Rows'))</div><div class="v">$total</div></div>
+    <div class="card"><div class="k">$(Get-SafeHtml (T '成功' 'Succeeded'))</div><div class="v">$ok</div></div>
+    <div class="card"><div class="k">$(Get-SafeHtml (T '失敗' 'Failed'))</div><div class="v">$fail</div></div>
+    <div class="card"><div class="k">$(Get-SafeHtml (T '中止/取消' 'Cancelled'))</div><div class="v">$cancel</div></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>$(Get-SafeHtml (T '原檔名' 'Original Name'))</th>
+          <th>$(Get-SafeHtml (T '新檔名' 'New Name'))</th>
+          <th>$(Get-SafeHtml (T '角色' 'Role'))</th>
+          <th>$(Get-SafeHtml (T '命名模式' 'Naming Mode'))</th>
+          <th>$(Get-SafeHtml (T '命名信心' 'Naming Confidence'))</th>
+          <th>$(Get-SafeHtml (T '信心分數' 'Confidence Score'))</th>
+          <th>$(Get-SafeHtml (T '狀態' 'Status'))</th>
+          <th>$(Get-SafeHtml (T '原因' 'Reason'))</th>
+          <th>$(Get-SafeHtml (T '原始路徑' 'Original Path'))</th>
+        </tr>
+      </thead>
+      <tbody>
+        $($rowHtml.ToString())
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>
+"@
+    [IO.File]::WriteAllText($OutputPath, $html, [Text.Encoding]::UTF8)
+    $script:LastRenameHtmlReport = $OutputPath
+    return $OutputPath
+}
+
+
+function Refresh-MainUiLikeLanguageToggle {
+    try { [Console]::CursorVisible = $false } catch {}
+    try { Clear-Host } catch {}
+    try {
+        $script:UiCache.WindowWidth = 0
+        $script:UiCache.WindowHeight = 0
+        $script:UiCache.SettingsLines = @()
+        $script:UiCache.StatusLines = @()
+    } catch {}
+    try { Reset-UiCachesSafe } catch {}
+    try { Draw-Frame | Out-Null } catch {}
+    try { Draw-LightBarMenu -Force } catch {}
+    try { Draw-StatusBar -Force } catch {}
+    try { $script:ForceFullRedraw = $false } catch {}
+}
+
+function New-DashboardPro {
+    param(
+        [string]$ReportRoot = $script:OutputRoot,
+        [switch]$OpenAfterGenerate
+    )
+
+    Ensure-Folder $ReportRoot
+    $files = Get-ChildItem -LiteralPath $ReportRoot -File -Filter *.html | Sort-Object LastWriteTime -Descending
+    $rows = @()
+    foreach ($f in @($files)) {
+        $type = if ($f.Name -match 'RenameReport|Rename_Cancelled_Report') {
+            T '實際改名報表' 'Actual Rename Report'
+        }
+        elseif ($f.Name -match 'RenamePreview') {
+            T '模擬改名報表' 'Rename Preview Report'
+        }
+        elseif ($f.Name -match 'Dashboard_Index_PRO') {
+            'Dashboard PRO'
+        }
+        else {
+            T '掃描分析報表' 'Scan Analysis Report'
+        }
+        $rows += New-Object PSObject -Property @{
+            Name = $f.Name
+            Type = $type
+            Modified = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')
+            SizeKB = [Math]::Round($f.Length / 1KB, 2)
+        }
+    }
+
+    $latest = if ($rows.Count -gt 0) { $rows[0] } else { $null }
+    $total = $rows.Count
+    $scanCount = @($rows | Where-Object { $_.Type -eq (T '掃描分析報表' 'Scan Analysis Report') }).Count
+    $previewCount = @($rows | Where-Object { $_.Type -eq (T '模擬改名報表' 'Rename Preview Report') }).Count
+    $renameCount = @($rows | Where-Object { $_.Type -eq (T '實際改名報表' 'Actual Rename Report') }).Count
+
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($r in $rows) {
+        [void]$sb.AppendLine('<tr>')
+        [void]$sb.AppendLine('<td><a href="' + (Get-SafeHtml $r.Name) + '">' + (Get-SafeHtml $r.Name) + '</a></td>')
+        [void]$sb.AppendLine('<td>' + (Get-SafeHtml $r.Type) + '</td>')
+        [void]$sb.AppendLine('<td>' + (Get-SafeHtml $r.Modified) + '</td>')
+        [void]$sb.AppendLine('<td>' + (Get-SafeHtml $r.SizeKB) + '</td>')
+        [void]$sb.AppendLine('</tr>')
+    }
+
+    $latestName = if ($latest) { Get-SafeHtml $latest.Name } else { '-' }
+    $latestType = if ($latest) { Get-SafeHtml $latest.Type } else { '-' }
+    $htmlPath = Join-Path $ReportRoot 'Dashboard_Index_PRO.html'
+    $html = @"
+<!doctype html>
+<html lang="$($script:Lang)">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dashboard PRO</title>
+<style>
+body{font-family:"Microsoft JhengHei","Segoe UI",Arial,sans-serif;background:#f4f7fb;color:#243447;margin:0;padding:24px}
+.wrap{max-width:1480px;margin:0 auto}
+h1{margin:0;font-size:30px}
+.sub{margin-top:8px;color:#6b7280}
+.hero{background:linear-gradient(135deg,#1f4e79,#34699a);color:#fff;border-radius:18px;padding:20px 22px;box-shadow:0 8px 26px rgba(31,78,121,.25);margin:22px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:22px 0}
+.card{background:#fff;border:1px solid #dbe4ef;border-radius:16px;padding:16px 18px;box-shadow:0 4px 16px rgba(0,0,0,.05)}
+.card .k{font-size:12px;color:#6b7280}.card .v{font-size:28px;font-weight:700;margin-top:6px}
+.panel{background:#fff;border:1px solid #dbe4ef;border-radius:16px;overflow:auto;box-shadow:0 4px 16px rgba(0,0,0,.05)}
+table{border-collapse:collapse;width:100%}
+th,td{padding:12px 14px;border-bottom:1px solid #ecf1f7;text-align:left}
+th{background:#1f4e79;color:#fff;position:sticky;top:0}
+tr:nth-child(even) td{background:#fafcff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Dashboard PRO</h1>
+  <div class="sub">$(Get-SafeHtml (T '報表資料夾' 'Report Root')) : $(Get-SafeHtml $ReportRoot)</div>
+  <div class="hero">
+    <div>$(Get-SafeHtml (T '最新報表' 'Latest Report')) : $latestName</div>
+    <div style="margin-top:8px">$(Get-SafeHtml (T '類型' 'Type')) : $latestType</div>
+  </div>
+  <div class="cards">
+    <div class="card"><div class="k">$(Get-SafeHtml (T 'HTML 總數' 'Total HTML Reports'))</div><div class="v">$total</div></div>
+    <div class="card"><div class="k">$(Get-SafeHtml (T '掃描分析' 'Scan Analysis'))</div><div class="v">$scanCount</div></div>
+    <div class="card"><div class="k">$(Get-SafeHtml (T '模擬改名' 'Rename Preview'))</div><div class="v">$previewCount</div></div>
+    <div class="card"><div class="k">$(Get-SafeHtml (T '實際改名' 'Actual Rename'))</div><div class="v">$renameCount</div></div>
+  </div>
+  <div class="panel">
+    <table>
+      <thead><tr><th>$(Get-SafeHtml (T '報表' 'Report'))</th><th>$(Get-SafeHtml (T '類型' 'Type'))</th><th>$(Get-SafeHtml (T '修改時間' 'Modified'))</th><th>KB</th></tr></thead>
+      <tbody>$($sb.ToString())</tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>
+"@
+    [IO.File]::WriteAllText($htmlPath, $html, [Text.Encoding]::UTF8)
+    $script:LastDashboardProReport = $htmlPath
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary ("Dashboard PRO: $htmlPath")
+    if ($OpenAfterGenerate) {
+        Start-Process -FilePath $htmlPath | Out-Null
+    }
+    return $htmlPath
+}
+
 function Open-LatestHtmlReport {
     Clear-Host
     Reset-UiCachesSafe
@@ -4046,6 +4396,22 @@ function Open-LatestHtmlReport {
             Key  = '2'
             Name = (T '最新模擬改名 HTML 報表' 'Latest Rename Preview HTML Report')
             Path = $script:LastRenamePreviewHtml
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LastRenameHtmlReport) -and (Test-Path -LiteralPath $script:LastRenameHtmlReport)) {
+        $choices += [pscustomobject]@{
+            Key  = '3'
+            Name = (T '最新實際改名 HTML 報表' 'Latest Actual Rename HTML Report')
+            Path = $script:LastRenameHtmlReport
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LastDashboardProReport) -and (Test-Path -LiteralPath $script:LastDashboardProReport)) {
+        $choices += [pscustomobject]@{
+            Key  = '4'
+            Name = (T '最新 Dashboard PRO' 'Latest Dashboard PRO')
+            Path = $script:LastDashboardProReport
         }
     }
 
@@ -4198,6 +4564,10 @@ function Preview-RenamePlan {
             return
         }
 
+        Write-Host ''
+        Write-Host (T '檔案計算中，請稍後...' 'Calculating files, please wait...') -ForegroundColor Cyan
+        Update-Status -Status (T '處理中' 'Processing') -Summary (T '檔案計算中，請稍後...' 'Calculating files, please wait...')
+
         $renameInfo = Get-RenamePlanWithFallback -Rows $script:Results
         $plans = @($renameInfo.Plans)
         $previewRows = @(New-RenamePreviewDataset -Rows $script:Results -Plans $plans)
@@ -4330,6 +4700,10 @@ function Invoke-AutoRename {
             return
         }
 
+        Write-Host ''
+        Write-Host (T '檔案計算中，請稍後...' 'Calculating files, please wait...') -ForegroundColor Cyan
+        Update-Status -Status (T '處理中' 'Processing') -Summary (T '檔案計算中，請稍後...' 'Calculating files, please wait...')
+
         $renameInfo = Get-RenamePlanWithFallback -Rows $script:Results
         $plans = @($renameInfo.Plans)
 
@@ -4357,56 +4731,122 @@ function Invoke-AutoRename {
 
         Ensure-Folder $script:OutputRoot
 
+        Write-Host ''
+        Write-Host (T '實際檔案改名中，請稍後...' 'Renaming files, please wait...') -ForegroundColor Cyan
+        Update-Status -Status (T '處理中' 'Processing') -Summary (T '實際檔案改名中，請稍後...' 'Renaming files, please wait...')
+
         $log = @()
         $success = 0
         $failed = 0
+        $cancelled = 0
+        $total = @($plans).Count
+        $index = 0
+        $wasCancelled = $false
+        $cancelledAt = 0
 
-        foreach ($p in $plans) {
-            try {
-                Rename-Item -LiteralPath $p.OriginalPath -NewName $p.SuggestedName -ErrorAction Stop
+        Start-ScanProgressUi
+        try {
+            foreach ($p in $plans) {
+                $index++
+                $extra = ('{0}: {1} | {2}: {3}' -f (T '成功' 'Succeeded'), $success, (T '失敗' 'Failed'), $failed)
+                Show-TaskProgressLine -Label (T '實際改名中' 'Renaming') -Current $index -Total $total -FileName $p.OriginalName -Hint '' -ExtraStatus $extra
 
-                $log += New-Object PSObject -Property ([ordered]@{
-                    OriginalName  = $p.OriginalName
-                    SuggestedName = $p.SuggestedName
-                    Role          = $p.Role
-                    NamingMode    = $p.NamingMode
-                    NamingConfidence = $p.NamingConfidence
-                    NamingConfidenceScore = $p.NamingConfidenceScore
-                    Status        = 'Renamed'
-                    Reason        = ''
-                })
+                if (Test-ScanCancelRequested) {
+                    $confirmStop = Show-ScanCancelConfirmUi -PromptText (T '偵測到 ESC，是否中止實際改名？' 'ESC detected. Cancel actual renaming?')
+                    if ($confirmStop) {
+                        $wasCancelled = $true
+                        $cancelledAt = $index
+                        Update-Status -Status (T '已中止' 'Cancelled') -Summary (T '使用者確認中止實際改名。' 'User confirmed cancel actual renaming.')
+                        $log += New-Object PSObject -Property ([ordered]@{
+                            OriginalName  = $p.OriginalName
+                            SuggestedName = $p.SuggestedName
+                            OriginalPath  = $p.OriginalPath
+                            Role          = $p.Role
+                            NamingMode    = $p.NamingMode
+                            NamingConfidence = $p.NamingConfidence
+                            NamingConfidenceScore = $p.NamingConfidenceScore
+                            Status        = 'Cancelled'
+                            Reason        = (T '使用者於執行中取消' 'Cancelled by user during execution')
+                        })
+                        $cancelled++
+                        break
+                    }
+                    else {
+                        $script:ScanCancelRequested = $false
+                        Show-TaskProgressLine -Label (T '實際改名中' 'Renaming') -Current $index -Total $total -FileName $p.OriginalName -Hint '' -ExtraStatus $extra -Force
+                    }
+                }
 
-                $success++
-            }
-            catch {
-                $log += New-Object PSObject -Property ([ordered]@{
-                    OriginalName  = $p.OriginalName
-                    SuggestedName = $p.SuggestedName
-                    Role          = $p.Role
-                    NamingMode    = $p.NamingMode
-                    NamingConfidence = $p.NamingConfidence
-                    NamingConfidenceScore = $p.NamingConfidenceScore
-                    Status        = 'Failed'
-                    Reason        = $_.Exception.Message
-                })
+                try {
+                    Rename-Item -LiteralPath $p.OriginalPath -NewName $p.SuggestedName -ErrorAction Stop
 
-                $failed++
+                    $log += New-Object PSObject -Property ([ordered]@{
+                        OriginalName  = $p.OriginalName
+                        SuggestedName = $p.SuggestedName
+                        OriginalPath  = $p.OriginalPath
+                        Role          = $p.Role
+                        NamingMode    = $p.NamingMode
+                        NamingConfidence = $p.NamingConfidence
+                        NamingConfidenceScore = $p.NamingConfidenceScore
+                        Status        = 'Renamed'
+                        Reason        = ''
+                    })
+
+                    $success++
+                }
+                catch {
+                    $log += New-Object PSObject -Property ([ordered]@{
+                        OriginalName  = $p.OriginalName
+                        SuggestedName = $p.SuggestedName
+                        OriginalPath  = $p.OriginalPath
+                        Role          = $p.Role
+                        NamingMode    = $p.NamingMode
+                        NamingConfidence = $p.NamingConfidence
+                        NamingConfidenceScore = $p.NamingConfidenceScore
+                        Status        = 'Failed'
+                        Reason        = $_.Exception.Message
+                    })
+
+                    $failed++
+                }
             }
         }
+        finally {
+            $finalHint = if ($wasCancelled) { (T '已中止' 'Cancelled') } else { (T '處理完成' 'Completed') }
+            Show-TaskProgressLine -Label (T '實際改名中' 'Renaming') -Current $index -Total $total -FileName '' -Hint $finalHint -ExtraStatus ('{0}: {1} | {2}: {3}' -f (T '成功' 'Succeeded'), $success, (T '失敗' 'Failed'), $failed) -Force
+            Stop-ScanProgressUi
+        }
 
-        $csvPath = Join-Path $script:OutputRoot ('RenameLog_{0}.csv' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+        $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+        $csvPath = Join-Path $script:OutputRoot ('RenameLog_{0}.csv' -f $stamp)
+        $htmlName = if ($wasCancelled) { 'Rename_Cancelled_Report_{0}.html' -f $stamp } else { 'RenameReport_{0}.html' -f $stamp }
+        $htmlPath = Join-Path $script:OutputRoot $htmlName
         $log | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+        $title = if ($wasCancelled) { (T '實際自動改檔名中止報表' 'Actual Auto Rename Cancelled Report') } else { (T '實際自動改檔名報表' 'Actual Auto Rename Report') }
+        $runState = if ($wasCancelled) { (T '已中止' 'Cancelled') } else { (T '完成' 'Completed') }
+        Export-ActualRenameHtmlReport -Rows $log -OutputPath $htmlPath -Title $title -RunState $runState -ProcessedCount $index -TotalCount $total | Out-Null
 
         Write-Host ''
-        Write-Host (T '自動改名完成。' 'Automatic renaming completed.') -ForegroundColor Green
+        if ($wasCancelled) {
+            Write-Host (T '實際改名已中止，已輸出中止報表。' 'Actual renaming cancelled. Cancellation report exported.') -ForegroundColor Yellow
+        }
+        else {
+            Write-Host (T '自動改名完成。' 'Automatic renaming completed.') -ForegroundColor Green
+        }
         Write-Host ((T '成功' 'Succeeded') + ' : ' + $success) -ForegroundColor Green
         Write-Host ((T '失敗' 'Failed') + ' : ' + $failed) -ForegroundColor Yellow
-        Write-Host ('CSV : ' + $csvPath) -ForegroundColor Green
+        if ($cancelled -gt 0) {
+            Write-Host ((T '中止/取消' 'Cancelled') + ' : ' + $cancelled) -ForegroundColor Yellow
+        }
+        Write-Host ('CSV  : ' + $csvPath) -ForegroundColor Green
+        Write-Host ('HTML : ' + $htmlPath) -ForegroundColor Green
 
         $script:LastRenameLog = $csvPath
-        Save-StateAndStatus -Status (T '完成' 'Done') -Summary ("Rename Log CSV: $csvPath")
+        $script:LastRenameHtmlReport = $htmlPath
+        $finalStatusText = if ($wasCancelled) { (T '已中止' 'Cancelled') } else { (T '完成' 'Done') }
+        Save-StateAndStatus -Status $finalStatusText -Summary ("Rename Report HTML: $htmlPath")
 
-        if ($success -gt 0) {
+        if (($success -gt 0) -and (-not $wasCancelled)) {
             $currentRoot = $script:ScanRoot
             Start-Scan
             $script:ScanRoot = $currentRoot
@@ -4425,6 +4865,7 @@ function Invoke-AutoRename {
         $script:IsRenameInProgress = $false
     }
 }
+
 
 # -----------------------------
 # Organize
@@ -4701,22 +5142,34 @@ try {
             continue
         }
 
-        $action = $null
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'D' -VirtualKeyCode 68 -Chars @('d','D')) {
+            $old = $script:SelectedMenu
+            $dashIndex = 0
+            for ($i = 0; $i -lt $menuItems.Count; $i++) {
+                if ($menuItems[$i].Action -eq 'DashboardPro') { $dashIndex = $i; break }
+            }
+            $script:SelectedMenu = $dashIndex
+            if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }
+            $action = 'DashboardPro'
+        }
+        else {
+            $action = $null
+        }
 
-        if (Test-KeyMatch -KeyInfo $key -KeyName 'Enter' -VirtualKeyCode 13) {
+        if (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'Enter' -VirtualKeyCode 13)) {
             $action = $menuItems[$script:SelectedMenu].Action
         }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D1' -VirtualKeyCode 49 -Chars @('1')) { $old = $script:SelectedMenu; $script:SelectedMenu = 0; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'Scan' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D2' -VirtualKeyCode 50 -Chars @('2')) { $old = $script:SelectedMenu; $script:SelectedMenu = 1; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ExportHtml' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D3' -VirtualKeyCode 51 -Chars @('3')) { $old = $script:SelectedMenu; $script:SelectedMenu = 2; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'OpenOutput' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D4' -VirtualKeyCode 52 -Chars @('4')) { $old = $script:SelectedMenu; $script:SelectedMenu = 3; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'SetScanRoot' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D5' -VirtualKeyCode 53 -Chars @('5')) { $old = $script:SelectedMenu; $script:SelectedMenu = 4; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'PreviewRename' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D6' -VirtualKeyCode 54 -Chars @('6')) { $old = $script:SelectedMenu; $script:SelectedMenu = 5; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ApplyRename' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D7' -VirtualKeyCode 55 -Chars @('7')) { $old = $script:SelectedMenu; $script:SelectedMenu = 6; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'OpenHtml' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D8' -VirtualKeyCode 56 -Chars @('8')) { $old = $script:SelectedMenu; $script:SelectedMenu = 7; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'Organize' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D9' -VirtualKeyCode 57 -Chars @('9')) { $old = $script:SelectedMenu; $script:SelectedMenu = 8; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ToggleMode' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'D0' -VirtualKeyCode 48 -Chars @('0')) { $old = $script:SelectedMenu; $script:SelectedMenu = 9; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'TogglePrimaryOnly' }
-        elseif (Test-KeyMatch -KeyInfo $key -KeyName 'Escape' -VirtualKeyCode 27) { $action = 'Exit' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D1' -VirtualKeyCode 49 -Chars @('1'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 0; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'Scan' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D2' -VirtualKeyCode 50 -Chars @('2'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 1; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ExportHtml' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D3' -VirtualKeyCode 51 -Chars @('3'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 2; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'OpenOutput' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D4' -VirtualKeyCode 52 -Chars @('4'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 3; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'SetScanRoot' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D5' -VirtualKeyCode 53 -Chars @('5'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 4; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'PreviewRename' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D6' -VirtualKeyCode 54 -Chars @('6'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 5; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ApplyRename' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D7' -VirtualKeyCode 55 -Chars @('7'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 6; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'OpenHtml' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D8' -VirtualKeyCode 56 -Chars @('8'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 7; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'Organize' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D9' -VirtualKeyCode 57 -Chars @('9'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 8; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'ToggleMode' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'D0' -VirtualKeyCode 48 -Chars @('0'))) { $old = $script:SelectedMenu; $script:SelectedMenu = 9; if ($old -ne $script:SelectedMenu) { Update-LightBarSelection -OldIndex $old -NewIndex $script:SelectedMenu }; $action = 'TogglePrimaryOnly' }
+        elseif (-not $action -and (Test-KeyMatch -KeyInfo $key -KeyName 'Escape' -VirtualKeyCode 27)) { $action = 'Exit' }
 
         switch ($action) {
             'Scan' { Start-Scan; $needsFullRedraw = $true; continue }
@@ -4776,6 +5229,14 @@ try {
             'ToggleNamingMode' {
                 Toggle-NamingMode
                 $needsFullRedraw = $true
+                continue
+            }
+            'DashboardPro' {
+                [Console]::CursorVisible = $true
+                New-DashboardPro -OpenAfterGenerate | Out-Null
+                [Console]::CursorVisible = $false
+                Refresh-MainUiLikeLanguageToggle
+                $needsFullRedraw = $false
                 continue
             }
             'Exit' { return }
