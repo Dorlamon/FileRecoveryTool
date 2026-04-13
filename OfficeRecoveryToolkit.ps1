@@ -1,5 +1,5 @@
 ﻿# ================================
-# Office Recovery Toolkit v5.8.5.2
+# Office Recovery Toolkit v5.8.5.3.3
 # PowerShell 5.1 Compatible
 # ================================
 
@@ -695,7 +695,7 @@ function Draw-Frame {
     }
 
     Write-At 0 0  ('=' * ($w - 1)) Cyan Black
-    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.5.2 LightBar' 'Office Recovery Analyzer v5.8.5.2 LightBar') White DarkBlue
+    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.5.3 LightBar' 'Office Recovery Analyzer v5.8.5.3 LightBar') White DarkBlue
     Write-At 2 2  (T '↑↓ 光棒選擇  Enter 執行  數字快速鍵  L 切換語系  Esc 離開' '↑↓ Select  Enter Run  Number hotkeys  L switch language  Esc exit') Gray Black
     Write-At 0 3  ('=' * ($w - 1)) Cyan Black
     return $true
@@ -1423,6 +1423,7 @@ function Get-ExcelSmartName {
     $zip = $null
     $sheetNames = @()
     $cellText = ''
+    $rosterProbeText = ''
 
     try {
         $zip = [System.IO.Compression.ZipFile]::OpenRead($FilePath)
@@ -1450,12 +1451,24 @@ function Get-ExcelSmartName {
                 $xml2 = $sr2.ReadToEnd()
                 $plain = Normalize-XmlText $xml2
 
-                if ($plain.Length -gt 5) {
-                    $cellText = $plain.Substring(0, [Math]::Min(50, $plain.Length))
-                    break
+                if (-not [string]::IsNullOrWhiteSpace($plain)) {
+                    if ($rosterProbeText.Length -lt 1200) {
+                        $need = 1200 - $rosterProbeText.Length
+                        $rosterProbeText += ' ' + $plain.Substring(0, [Math]::Min($need, $plain.Length))
+                    }
+
+                    if ($plain.Length -gt 5 -and [string]::IsNullOrWhiteSpace($cellText)) {
+                        $cellText = $plain.Substring(0, [Math]::Min(50, $plain.Length))
+                    }
                 }
             }
             finally { $sr2.Close() }
+        }
+
+        $combinedProbe = (($sheetNames -join ' ') + ' ' + $rosterProbeText).Trim()
+        $rosterName = Get-WorkbookRosterName -Text $combinedProbe -Extension '.xlsx'
+        if (-not [string]::IsNullOrWhiteSpace($rosterName)) {
+            return (Get-SafeFileName $rosterName)
         }
 
         $nameParts = @()
@@ -2962,8 +2975,58 @@ function Get-NamingAmountToken {
     return ''
 }
 
+
+function Test-WorkbookLooksLikeRoster {
+    param(
+        [string]$Text,
+        [string]$Extension
+    )
+
+    $ext = ($Extension + '').ToLowerInvariant()
+    if ($ext -notin @('.xls', '.xlsx')) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+
+    $t = Normalize-PreviewTextForNaming ([string]$Text)
+
+    $hits = 0
+
+    $groups = @(
+        '(?i)(^|[\s,_|:/\-])姓名([\s,_|:/\-]|$)|name',
+        '(?i)(^|[\s,_|:/\-])日期([\s,_|:/\-]|$)|date|出生日期|填表日期',
+        '(?i)身份證|身分證|身份證號|身分證號|身份證字號|身分證字號|id\s*no|id\s*number|身分證統一編號'
+    )
+
+    foreach ($g in $groups) {
+        if ($t -match $g) { $hits++ }
+    }
+
+    return ($hits -ge 2)
+}
+
+function Get-WorkbookRosterName {
+    param(
+        [string]$Text,
+        [string]$Extension
+    )
+
+    if (-not (Test-WorkbookLooksLikeRoster -Text $Text -Extension $Extension)) {
+        return ''
+    }
+
+    $dateToken = Get-NamingDateToken -Text $Text
+    if (-not [string]::IsNullOrWhiteSpace($dateToken)) {
+        return ('名冊_{0}' -f $dateToken)
+    }
+
+    return '名冊'
+}
+
 function Get-NamingKeywordToken {
     param([string]$Text, [string]$Extension)
+
+    if (Test-WorkbookLooksLikeRoster -Text $Text -Extension $Extension) {
+        return '名冊'
+    }
 
     $pairs = @(
         @{ Pattern='invoice|發票'; Value='Invoice' },
@@ -3120,9 +3183,22 @@ function Get-SuggestedBaseNameInfo {
             $keyword = Get-NamingKeywordToken -Text $text -Extension $ext
             $dateToken = Get-NamingDateToken -Text $text
             $amountToken = Get-NamingAmountToken -Text $text
+
+            if ($ext -in @('.xls', '.xlsx')) {
+                $rosterSmart = Get-WorkbookRosterName -Text $text -Extension $ext
+                if (-not [string]::IsNullOrWhiteSpace($rosterSmart)) {
+                    $baseName = $rosterSmart
+                    $reason = 'RosterWorkbook'
+                    $source = 'Workbook'
+                    $keyword = '名冊'
+                }
+            }
         }
 
-        $smart = Build-SmartNameFromTokens -Keyword $keyword -DateToken $dateToken -AmountToken $amountToken -TitleToken $bestLine
+        $smart = ''
+        if ([string]::IsNullOrWhiteSpace($baseName)) {
+            $smart = Build-SmartNameFromTokens -Keyword $keyword -DateToken $dateToken -AmountToken $amountToken -TitleToken $bestLine
+        }
 
         if ($mode -eq 'Conservative') {
             $tokenCount = 0
@@ -3159,6 +3235,7 @@ function Get-SuggestedBaseNameInfo {
     $score = Get-NamingConfidenceScore -Keyword $keyword -DateToken $dateToken -AmountToken $amountToken -TitleToken $bestLine -LooksBad:$looksBad -Mode $mode -FallbackBase $fallback
     if ($source -eq 'Original' -and $score -gt 45) { $score = 45 }
     if ($source -eq 'Excel' -and $score -lt 85) { $score = 85 }
+    if ($reason -eq 'RosterWorkbook' -and $score -lt 88) { $score = 88 }
 
     [pscustomobject]@{
         BaseName = $baseName

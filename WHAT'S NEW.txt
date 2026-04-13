@@ -1,0 +1,53 @@
+WHAT'S NEW
+
+(en-US)
+New Rules in Version 5.8.5.3:
+
+Scope: Applies only to .xls and .xlsx files.
+
+Detection Logic: If the content contains "Roster" characteristic fields, such as:
+
+Name
+
+Date
+
+ID No / ID Number / ID Card Number
+
+Naming Priority: If at least two categories of these characteristics are detected, the suggested filename (in both Simulation and Actual modes) will be prioritized as: Roster.
+
+Date Integration: If a recognizable date is found within the content, it will follow the format: Roster_2025-04-13.
+
+Improvements in this version:
+
+.xlsx handling: Logic now evaluates both the Sheet Name and the Sheet Content.
+
+.xls handling: Logic evaluates the PreviewText extracted during the initial scan.
+
+Confidence Score: I have increased the naming confidence score for this detection type, ensuring the report clearly identifies these as high-confidence results.
+
+
+(zh-TW)
+v5.8.5.3 這版新增的規則是：
+
+只對 .xls / .xlsx 生效
+如果內容中偵測到名冊特徵欄位，像是：
+姓名
+日期
+身份證號 / 身分證號 / 身分證字號
+ID No / ID Number
+而且至少命中 2 類以上欄位特徵
+就會在 模擬改檔名 與 實際改檔名 的建議命名中，優先判定為：
+名冊
+
+如果內容裡還有可辨識日期，會變成：
+
+名冊_2025-04-13
+
+這版也一起處理了兩種情況：
+
+.xlsx
+會從工作表名稱 + 工作表文字內容做判斷
+.xls
+會從你原本掃描抽出的 PreviewText 做判斷
+
+另外我把這種判定的命名信心分數也拉高了，所以報表裡會比較明確地顯示這是高可信度命名。
