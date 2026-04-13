@@ -8,7 +8,7 @@ After extracting the files, run:
 OfficeRecoveryToolkit.cmd 
 
 # SHA256:  
-F7B5EA788E89E3449B4D5D8BCB5CEBE72D9F24A36767B8F32656248E9CECB74E
+2FD96AC969292CB1C14609F146DB99DC6F945C05D418F920C728981E5D2C389C  
   
 # Required Installation  
 Microsoft Office Word, Excel, and PowerPoint 2007 File Format Compatibility Pack  
@@ -55,7 +55,7 @@ Highlight Primary files in HTML with ⭐
 解壓縮後，執行: OfficeRecoveryToolkit.cmd
 
 # SHA256:  
-F7B5EA788E89E3449B4D5D8BCB5CEBE72D9F24A36767B8F32656248E9CECB74E
+2FD96AC969292CB1C14609F146DB99DC6F945C05D418F920C728981E5D2C389C  
   
 # 必要安裝:  
 Microsoft Office Word、Excel 及 PowerPoint 2007 檔案格式相容性套件  
