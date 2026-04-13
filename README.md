@@ -1,4 +1,4 @@
-# Office Recovery Toolkit v5.8.5.3 (LightBar Menu) 
+# Office Recovery Toolkit v5.8.5.6 (LightBar Menu) 
 This utility is designed for scenarios where recovered files have lost their original naming data
 due to a missing Master File Table (MFT).   
 It serves as an auxiliary tool that extracts file content to perform intelligent renaming.
@@ -13,6 +13,14 @@ F7B5EA788E89E3449B4D5D8BCB5CEBE72D9F24A36767B8F32656248E9CECB74E
 # Required Installation  
 Microsoft Office Word, Excel, and PowerPoint 2007 File Format Compatibility Pack  
 https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
+
+# New in Version 5.8.5.6:  
+Pre-processing: Display "Calculating files, please wait..." before renaming begins.  
+Progress Tracking: Full progress bar for the actual renaming process.  
+Interruption: Press ESC to abort and trigger a UI confirmation prompt.  
+Reporting: Export an "Aborted Task Report" if the process is cancelled.  
+Visuals: Generate a color-coded HTML report for actual renaming results.  
+Integration: Dashboard PRO integrated into the main menu.  
   
 # Features in This Version  
 Enhanced reporting functionality  
@@ -52,6 +60,14 @@ F7B5EA788E89E3449B4D5D8BCB5CEBE72D9F24A36767B8F32656248E9CECB74E
 # 必要安裝:  
 Microsoft Office Word、Excel 及 PowerPoint 2007 檔案格式相容性套件  
 https://w3.nhps.tp.edu.tw/cptech/upload/FileFormatConverters.exe  
+
+# v5.8.5.6 這版新增的功能是：  
+實際改名前先顯示「檔案計算中，請稍後...」  
+實際改名有完整進度列  
+ESC 可中止並跳 UI 確認  
+中止後輸出中止報表  
+彩色實際改名 HTML 報表  
+Dashboard PRO 整合主選單  
   
 # 這版包含：  
   
