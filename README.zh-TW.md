@@ -245,7 +245,7 @@ powershell -ExecutionPolicy Bypass -File .\OfficeRecoveryToolkit.ps1
 
 ## 版本說明
 
-目前統一版本為：`v5.8.5.10`
+目前統一版本為：`v5.8.5.12`
 
 歷史版本演進可見於：
 
