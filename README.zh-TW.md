@@ -23,9 +23,9 @@ Office 文件救援後智慧整理工具。
 ## 主要功能
 
 - 支援掃描格式：
-  - `docx` - `xlsx` - `pptx`
-  - `doc` - `xls` - `ppt`
-  - `rtf` - `pdf` - `txt`
+  - `docx` `xlsx` `pptx`
+  - `doc` `xls` `ppt`
+  - `rtf` `pdf` `txt`
 - SHA256 雜湊去重複
 - 檔案內容指紋比對
 - Excel 全工作表解析
