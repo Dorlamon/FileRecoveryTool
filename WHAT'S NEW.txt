@@ -1,9 +1,49 @@
 WHAT'S NEW
 
+Current release: v5.8.5.12
+
 (en-US)
 -------------------------------------------------------------------------------------------
-New in Version 5.8.5.6:
+New in Version 5.8.5.12:
 
+Revised Logic Specifications
+Default Behavior: Changed the default setting to skip password-protected files.
+
+Password Input: When the "P" key is pressed, prompt the user to enter a password. This password will then be automatically applied to all encrypted files in the batch to attempt decryption.
+
+Failed Decryption: If the provided password fails to unlock a file, the file should be flagged/marked as usual.
+
+Empty Input: If the "P" key is pressed but no password is entered, the system will continue to skip password-protected files.
+
+Clearing Passwords: Pressing the "P" key again while a password is saved will clear the current password.
+
+-------------------------------------------------------------------------------------------
+New in Version 5.8.5.11:
+
+Fix: Corrected the logic so that when [P] Skip encrypted files is OFF, probe errors no longer force encrypted legacy Office files to be skipped.
+Behavior: ProbeError now follows the same skip decision as the P toggle.
+
+-------------------------------------------------------------------------------------------
+New in Version 5.8.5.10:
+
+Fix: When scanning encrypted legacy Word/Office files with interactive password prompts enabled, the scan now runs the conversion in a helper process to avoid blocking the main scan loop.
+Cancel: While waiting for the helper conversion, ESC can now cancel the current helper task.
+Behavior: This improves recovery when password prompts appear but the conversion becomes unresponsive.
+
+-------------------------------------------------------------------------------------------
+New in Version 5.8.5.9:
+
+Menu: Added a new [P] option to toggle "Skip encrypted files".
+Default: The option is ON by default.
+Behavior: When turned OFF, legacy Office conversion no longer skips encrypted files before conversion and can fall back to interactive password prompts.
+UI: The current setting is shown in the right-side settings panel.
+
+-------------------------------------------------------------------------------------------
+New in Version 5.8.5.8:
+
+Encrypted file support: Added detection for encrypted .pdf and .rtf formats.
+Visual upgrade: Scanning progress bar upgraded to PRO style.
+Visual upgrade: Actual renaming progress bar upgraded to PRO style.
 Pre-processing: Display "Calculating files, please wait..." before renaming begins.
 Progress Tracking: Full progress bar for the actual renaming process.
 Interruption: Press ESC to abort and trigger a UI confirmation prompt.
@@ -30,7 +70,39 @@ Confidence Score: I have increased the naming confidence score for this detectio
 
 (zh-TW)
 -------------------------------------------------------------------------------------------
-v5.8.5.6 這版新增的功能是：
+v5.8.5.12 這版修正的功能是：
+
+改成預設跳過有加密碼的檔案。 按P鍵時 改輸入密碼是多少 然後批次有密碼的檔案都直接帶入這個密碼嘗試是否可以解開密碼 不行一樣標注 
+按P鍵時如沒輸入密碼維持跳過加密碼的檔案
+當有設定密碼時再按一次P鍵可以清除密碼。
+
+-------------------------------------------------------------------------------------------
+v5.8.5.11 這版修正的功能是：
+
+修正 `P=False` 時，若 probe 發生錯誤仍直接略過加密檔案的邏輯問題
+現在 `ProbeError` 會跟著 P 開關走，不會再無視設定
+
+-------------------------------------------------------------------------------------------
+v5.8.5.10 這版修正的功能是：
+
+修正掃描加密的舊版 Word / Office 檔時，互動式密碼提示可能導致主掃描流程卡住
+等待 helper 轉檔期間，現在支援按 ESC 取消當前轉檔工作
+改善輸入密碼後 Office 無回應時，整體掃描無法跳出的情況
+
+-------------------------------------------------------------------------------------------
+v5.8.5.9 這版新增的功能是：
+
+新增 [P] 選單：已加密檔案跳過
+預設為開啟
+若切換為否，Legacy 轉檔流程不會先跳過已加密檔案，並可改為互動式密碼提示
+右側設定面板會顯示目前狀態
+
+-------------------------------------------------------------------------------------------
+v5.8.5.8 這版新增的功能是：
+
+支援判斷加密的 .pdf 和 .rtf 格式
+掃描進度列升級為 PRO 顯示
+實際改名進度列也套用同一套 PRO 顯示
 實際改名前先顯示「檔案計算中，請稍後...」
 實際改名有完整進度列
 ESC 可中止並跳 UI 確認

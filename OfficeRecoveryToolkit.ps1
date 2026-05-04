@@ -1,5 +1,5 @@
 ﻿# ================================
-# Office Recovery Toolkit v5.8.5.6
+# Office Recovery Toolkit v5.8.5.12
 # PowerShell 5.1 Compatible
 # ================================
 
@@ -41,6 +41,8 @@ $script:LegacyOfficeTimeoutSec = 45
 $script:LegacyOfficeMaxFileMB = 32
 $script:LegacyConversionMode = $true
 $script:LegacyKeepTempConverted = $false
+$script:SkipEncryptedFiles = $true
+$script:BatchPassword = ''
 $script:OfficeProbeEnabled = $true
 $script:OfficeProbeTimeoutSec = 15
 $script:OfficeProbePath = Join-Path $PSScriptRoot 'OfficeEncryptionProbe.exe'
@@ -76,6 +78,40 @@ function Ensure-Folder {
     if (-not (Test-Path $Path)) {
         New-Item -Path $Path -ItemType Directory -Force | Out-Null
     }
+}
+
+function Get-SafeFileNamePart {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return 'Converted' }
+    $invalid = [IO.Path]::GetInvalidFileNameChars()
+    $chars = @()
+    foreach ($ch in $Name.ToCharArray()) {
+        if ($invalid -contains $ch) { $chars += '_' } else { $chars += $ch }
+    }
+    $safe = (($chars -join '') -replace '\s+', '_').Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safe)) { return 'Converted' }
+    if ($safe.Length -gt 80) { return $safe.Substring(0,80) }
+    return $safe
+}
+
+function New-LegacyConvertedTempPath {
+    param(
+        [string]$SourcePath,
+        [string]$TargetExt
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TargetExt)) { $TargetExt = '.tmp' }
+
+    if ($script:LegacyKeepTempConverted) {
+        $keepRoot = Join-Path $script:OutputRoot 'ConvertedTemp'
+        Ensure-Folder $keepRoot
+        $base = Get-SafeFileNamePart ([IO.Path]::GetFileNameWithoutExtension($SourcePath))
+        $stamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
+        $shortId = ([guid]::NewGuid().ToString('N')).Substring(0,8)
+        return (Join-Path $keepRoot ($base + '_' + $stamp + '_' + $shortId + $TargetExt))
+    }
+
+    return (Join-Path $env:TEMP ('ORT_CONVERT_' + [guid]::NewGuid().ToString() + $TargetExt))
 }
 
 function Reset-UiCache {
@@ -122,6 +158,7 @@ function Save-AppState {
             LegacyOfficeMaxFileMB = $script:LegacyOfficeMaxFileMB
             LegacyConversionMode = $script:LegacyConversionMode
             LegacyKeepTempConverted = $script:LegacyKeepTempConverted
+            SkipEncryptedFiles = $script:SkipEncryptedFiles
             OfficeProbeEnabled = $script:OfficeProbeEnabled
             OfficeProbeTimeoutSec = $script:OfficeProbeTimeoutSec
             OfficeProbePath = $script:OfficeProbePath
@@ -164,6 +201,7 @@ function Load-AppState {
         if ($cfg.LegacyOfficeMaxFileMB) { $script:LegacyOfficeMaxFileMB = [int]$cfg.LegacyOfficeMaxFileMB }
         if ($null -ne $cfg.LegacyConversionMode) { $script:LegacyConversionMode = [bool]$cfg.LegacyConversionMode }
         if ($null -ne $cfg.LegacyKeepTempConverted) { $script:LegacyKeepTempConverted = [bool]$cfg.LegacyKeepTempConverted }
+        if ($null -ne $cfg.SkipEncryptedFiles) { $script:SkipEncryptedFiles = [bool]$cfg.SkipEncryptedFiles }
         if ($null -ne $cfg.OfficeProbeEnabled) { $script:OfficeProbeEnabled = [bool]$cfg.OfficeProbeEnabled }
         if ($cfg.OfficeProbeTimeoutSec) { $script:OfficeProbeTimeoutSec = [int]$cfg.OfficeProbeTimeoutSec }
         if ($cfg.OfficeProbePath) { $script:OfficeProbePath = [string]$cfg.OfficeProbePath }
@@ -318,7 +356,7 @@ function Test-ShouldSkipOfficeByProbe {
     $state = [string]$probe.State
     if ($state -in @('Encrypted','WriteProtectedOnly','PossiblyProtected','Corrupt')) {
         return [pscustomobject]@{
-            Skip = $true
+            Skip = ([bool]$script:SkipEncryptedFiles -and [string]::IsNullOrWhiteSpace([string]$script:BatchPassword))
             State = $state
             Detail = [string]$probe.Detail
             ExitCode = [int]$probe.ExitCode
@@ -328,7 +366,7 @@ function Test-ShouldSkipOfficeByProbe {
 
     if ($state -eq 'Error') {
         return [pscustomobject]@{
-            Skip = $true
+            Skip = ([bool]$script:SkipEncryptedFiles -and [string]::IsNullOrWhiteSpace([string]$script:BatchPassword))
             State = 'ProbeError'
             Detail = if ([string]::IsNullOrWhiteSpace([string]$probe.Detail)) { 'Probe failed' } else { [string]$probe.Detail }
             ExitCode = [int]$probe.ExitCode
@@ -376,7 +414,7 @@ function Test-OoxmlProtectionState {
                     if ($sig[$i] -ne $ole[$i]) { $isOle = $false; break }
                 }
                 if ($isOle) {
-                    $res.Skip = $true
+                    $res.Skip = ([bool]$script:SkipEncryptedFiles -and [string]::IsNullOrWhiteSpace([string]$script:BatchPassword))
                     $res.State = 'Encrypted'
                     $res.Detail = 'OOXML password-protected package detected'
                     return [pscustomobject]$res
@@ -396,7 +434,7 @@ function Test-OoxmlProtectionState {
         try {
             foreach ($entry in $zip.Entries) {
                 if ($entry.FullName -eq 'EncryptionInfo' -or $entry.FullName -eq 'EncryptedPackage') {
-                    $res.Skip = $true
+                    $res.Skip = ([bool]$script:SkipEncryptedFiles -and [string]::IsNullOrWhiteSpace([string]$script:BatchPassword))
                     $res.State = 'Encrypted'
                     $res.Detail = 'OOXML encryption markers detected'
                     return [pscustomobject]$res
@@ -706,7 +744,7 @@ function Draw-Frame {
     }
 
     Write-At 0 0  ('=' * ($w - 1)) Cyan Black
-    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.5.6 LightBar' 'Office File Recovery Analyzer v5.8.5.6 LightBar') White DarkBlue
+    Write-At 2 1  (T 'Office 檔案救援分析工具 v5.8.5.12' 'Office File Recovery Analyzer v5.8.5.12') White DarkBlue
     Write-At 2 2  (T '↑↓ 光棒選擇  Enter 執行  數字快速鍵  L 切換語系  Esc 離開' '↑↓ Select  Enter Run  Number hotkeys  L switch language  Esc exit') Gray Black
     Write-At 0 3  ('=' * ($w - 1)) Cyan Black
     return $true
@@ -726,6 +764,7 @@ function Get-MenuItems {
         @{ Key='0'; Text=(T '切換是否只整理主檔' 'Toggle Primary Only Mode'); Action='TogglePrimaryOnly' },
         @{ Key='C'; Text=(T '切換 Legacy 轉新版' 'Toggle Legacy Convert'); Action='ToggleLegacyConversion' },
         @{ Key='H'; Text=(T '切換智慧命名模式' 'Toggle Naming Mode'); Action='ToggleNamingMode' },
+        @{ Key='P'; Text=(T '設定/清除批次密碼' 'Set/Clear Batch Password'); Action='ConfigureBatchPassword' },
         @{ Key='D'; Text=(T '產生 Dashboard PRO' 'Generate Dashboard PRO'); Action='DashboardPro' },
         @{ Key='L'; Text=(T '切換語系' 'Switch Language'); Action='ToggleLang' },
         @{ Key='Esc'; Text=(T '離開' 'Exit'); Action='Exit' }
@@ -809,6 +848,8 @@ function Draw-SettingsPanel {
         ((T '最新 Dashboard' 'Dashboard') + ' : ' + (Get-ShortDisplayText $script:LastDashboardProReport $valueWidth)),
         ((T '最新整理紀錄' 'Organize Log') + ' : ' + (Get-ShortDisplayText $script:LastOrganizerLog $valueWidth)),
         ((T '命名模式' 'Naming Mode') + ' : ' + (Get-NamingModeDisplay)),
+        ((T '已加密檔案跳過' 'Skip Encrypted') + ' : ' + ([string](Get-EffectiveSkipEncryptedFiles))),
+        ((T '批次密碼' 'Batch Password') + ' : ' + (Get-BatchPasswordDisplay)),
         ((T '舊檔快速模式' 'Legacy Quick') + ' : ' + ([string]$script:LegacyQuickMode)),
         ((T 'Office 背景解析' 'Office Fallback') + ' : ' + ([string]$script:LegacyOfficeFallback)),
         ((T 'Office 逾時秒數' 'Timeout Sec') + ' : ' + ([string]$script:LegacyOfficeTimeoutSec))
@@ -998,6 +1039,40 @@ function Test-ScanCancelRequested {
     }
 
     return $script:ScanCancelRequested
+}
+
+function Wait-HelperProcess {
+    param(
+        [Parameter(Mandatory=$true)]
+        $Process,
+        [int]$TimeoutSec = 45,
+        [switch]$AllowScanCancel,
+        [string]$CancelStatus = 'Cancelled',
+        [string]$CancelError = 'Cancelled by user'
+    )
+
+    if (-not $Process) { return [pscustomobject]@{ Completed = $false; TimedOut = $false; Cancelled = $false } }
+
+    $deadline = (Get-Date).AddSeconds([Math]::Max(1, $TimeoutSec))
+    while ($true) {
+        if ($Process.HasExited) {
+            return [pscustomobject]@{ Completed = $true; TimedOut = $false; Cancelled = $false }
+        }
+
+        if ($AllowScanCancel -and (Test-ScanCancelRequested)) {
+            try { $Process.Kill() } catch {}
+            if ($script:KillOfficeProcessesOnTimeout) { Stop-OrphanOfficeProcesses -Force }
+            return [pscustomobject]@{ Completed = $false; TimedOut = $false; Cancelled = $true; Status = $CancelStatus; Error = $CancelError }
+        }
+
+        if ((Get-Date) -ge $deadline) {
+            try { $Process.Kill() } catch {}
+            if ($script:KillOfficeProcessesOnTimeout) { Stop-OrphanOfficeProcesses -Force }
+            return [pscustomobject]@{ Completed = $false; TimedOut = $true; Cancelled = $false }
+        }
+
+        Start-Sleep -Milliseconds 200
+    }
 }
 
 
@@ -1639,13 +1714,18 @@ function Get-LegacyOfficeTextViaHelper {
     $escapedPath = $FilePath.Replace("'", "''")
     $escapedOut  = $helperOut.Replace("'", "''")
     $escapedApp  = $AppType.Replace("'", "''")
+    $escapedPassword = ([string]$script:BatchPassword).Replace("'", "''")
+    $interactivePrompt = if ($script:SkipEncryptedFiles -or -not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) { '$false' } else { '$true' }
+    $batchPassword = [string]$script:BatchPassword
 
     $helper = @"
 `$ErrorActionPreference = 'SilentlyContinue'
 `$filePath = '$escapedPath'
 `$outPath  = '$escapedOut'
 `$appType  = '$escapedApp'
+`$password = '$escapedPassword'
 `$maxChars = $MaxChars
+`$interactivePrompt = $interactivePrompt
 `$result = ''
 
 function Normalize-OfficeTextLocal([string]`$text) {
@@ -1662,11 +1742,15 @@ if (`$appType -eq 'Excel') {
     `$wb = `$null
     try {
         `$excel = New-Object -ComObject Excel.Application
-        `$excel.Visible = `$false
-        `$excel.DisplayAlerts = `$false
-        `$excel.ScreenUpdating = `$false
-        `$excel.EnableEvents = `$false
-        `$wb = `$excel.Workbooks.Open(`$filePath, 0, `$false)
+        `$excel.Visible = `$interactivePrompt
+        if (`$interactivePrompt) { `$excel.DisplayAlerts = `$true } else { `$excel.DisplayAlerts = `$false }
+        `$excel.ScreenUpdating = `$interactivePrompt
+        `$excel.EnableEvents = `$interactivePrompt
+        if ([string]::IsNullOrEmpty(`$password)) {
+            `$wb = `$excel.Workbooks.Open(`$filePath, 0, `$false)
+        } else {
+            `$wb = `$excel.Workbooks.Open(`$filePath, 0, `$false, 5, `$password)
+        }
         `$parts = New-Object System.Collections.ArrayList
         foreach (`$ws in `$wb.Worksheets) {
             try {
@@ -1700,9 +1784,13 @@ elseif (`$appType -eq 'Word') {
     `$doc = `$null
     try {
         `$word = New-Object -ComObject Word.Application
-        `$word.Visible = `$false
-        `$word.DisplayAlerts = 0
-        `$doc = `$word.Documents.Open(`$filePath, `$false, `$false)
+        `$word.Visible = `$interactivePrompt
+        if (`$interactivePrompt) { `$word.DisplayAlerts = -1 } else { `$word.DisplayAlerts = 0 }
+        if ([string]::IsNullOrEmpty(`$password)) {
+            `$doc = `$word.Documents.Open(`$filePath, `$false, `$false, `$false)
+        } else {
+            `$doc = `$word.Documents.Open(`$filePath, `$false, `$false, `$false, `$password)
+        }
         `$parts = @()
         try {
             if (`$doc.BuiltInDocumentProperties('Title').Value) { `$parts += [string]`$doc.BuiltInDocumentProperties('Title').Value }
@@ -1723,8 +1811,8 @@ elseif (`$appType -eq 'PowerPoint') {
     `$pres = `$null
     try {
         `$ppt = New-Object -ComObject PowerPoint.Application
-        `$ppt.Visible = 1
-        `$pres = `$ppt.Presentations.Open(`$filePath, `$false, `$true, `$false)
+        if (`$interactivePrompt) { `$ppt.Visible = 1 } else { `$ppt.Visible = 0 }
+        `$pres = `$ppt.Presentations.Open(`$filePath, `$false, `$true, `$interactivePrompt)
         `$parts = New-Object System.Collections.ArrayList
         foreach (`$slide in `$pres.Slides) {
             try {
@@ -1759,10 +1847,8 @@ if (`$result) {
     try {
         [System.IO.File]::WriteAllText($helperPs1, $helper, [System.Text.Encoding]::UTF8)
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File', $helperPs1) -WindowStyle Minimized -PassThru
-        $completed = $proc.WaitForExit($TimeoutSec * 1000)
-        if (-not $completed) {
-            try { $proc.Kill() } catch {}
-            if ($script:KillOfficeProcessesOnTimeout) { Stop-OrphanOfficeProcesses -Force }
+        $wait = Wait-HelperProcess -Process $proc -TimeoutSec $TimeoutSec -AllowScanCancel
+        if (-not $wait.Completed) {
             return ''
         }
 
@@ -1865,7 +1951,7 @@ function Convert-LegacyOfficeViaConverterToTemp {
         }
     }
 
-    $tempPath = Join-Path $env:TEMP ('ORT_CONVERT_' + [guid]::NewGuid().ToString() + $targetExt)
+    $tempPath = New-LegacyConvertedTempPath -SourcePath $FilePath -TargetExt $targetExt
     $stdoutPath = Join-Path $env:TEMP ('ORT_CONVERT_STDOUT_' + [guid]::NewGuid().ToString() + '.log')
     $stderrPath = Join-Path $env:TEMP ('ORT_CONVERT_STDERR_' + [guid]::NewGuid().ToString() + '.log')
 
@@ -1914,6 +2000,35 @@ function Convert-LegacyOfficeViaConverterToTemp {
     return New-Object PSObject -Property $result
 }
 
+function Configure-OfficeInteropApp {
+    param(
+        $App,
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType
+    )
+
+    if (-not $App) { return }
+    $interactive = (-not [bool]$script:SkipEncryptedFiles) -and [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)
+
+    try {
+        switch ($AppType) {
+            'Word' {
+                try { $App.Visible = $interactive } catch {}
+                try { $App.DisplayAlerts = $(if ($interactive) { -1 } else { 0 }) } catch {}
+            }
+            'Excel' {
+                try { $App.Visible = $interactive } catch {}
+                try { $App.DisplayAlerts = $(if ($interactive) { $true } else { $false }) } catch {}
+                try { $App.ScreenUpdating = $interactive } catch {}
+                try { $App.EnableEvents = $interactive } catch {}
+            }
+            'PowerPoint' {
+                try { $App.Visible = $(if ($interactive) { 1 } else { 0 }) } catch {}
+            }
+        }
+    }
+    catch {}
+}
+
 function New-OfficeInteropApp {
     param(
         [ValidateSet('Word','Excel','PowerPoint')][string]$AppType
@@ -1923,21 +2038,17 @@ function New-OfficeInteropApp {
         switch ($AppType) {
             'Word' {
                 $word = New-Object -ComObject Word.Application
-                $word.Visible = $false
-                $word.DisplayAlerts = 0
+                Configure-OfficeInteropApp -App $word -AppType Word
                 return $word
             }
             'Excel' {
                 $excel = New-Object -ComObject Excel.Application
-                $excel.Visible = $false
-                $excel.DisplayAlerts = $false
-                try { $excel.ScreenUpdating = $false } catch {}
-                try { $excel.EnableEvents = $false } catch {}
+                Configure-OfficeInteropApp -App $excel -AppType Excel
                 return $excel
             }
             'PowerPoint' {
                 $ppt = New-Object -ComObject PowerPoint.Application
-                try { $ppt.Visible = 0 } catch {}
+                Configure-OfficeInteropApp -App $ppt -AppType PowerPoint
                 return $ppt
             }
         }
@@ -1958,7 +2069,10 @@ function Ensure-OfficeInteropApp {
     }
 
     $existing = $script:OfficeInterop[$AppType]
-    if ($existing) { return $existing }
+    if ($existing) {
+        Configure-OfficeInteropApp -App $existing -AppType $AppType
+        return $existing
+    }
 
     $app = New-OfficeInteropApp -AppType $AppType
     if (-not $app) {
@@ -2044,17 +2158,21 @@ function Convert-LegacyOfficeViaHelperToTemp {
         }
     }
 
-    $tempPath = Join-Path $env:TEMP ('ORT_CONVERT_' + [guid]::NewGuid().ToString() + $targetExt)
+    $tempPath = New-LegacyConvertedTempPath -SourcePath $FilePath -TargetExt $targetExt
     $helperOut = Join-Path $env:TEMP ('ORT_CONVERT_RESULT_' + [guid]::NewGuid().ToString() + '.json')
+    $interactivePrompt = if ($script:SkipEncryptedFiles -or -not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) { '$false' } else { '$true' }
+    $batchPassword = [string]$script:BatchPassword
 
     $helper = @"
 param(
     [string]`$InputPath,
     [string]`$OutputPath,
     [string]`$ResultPath,
-    [string]`$AppType
+    [string]`$AppType,
+    [string]`$Password
 )
 
+`$interactivePrompt = $interactivePrompt
 `$res = [ordered]@{
     Success = `$false
     TempPath = `$OutputPath
@@ -2068,11 +2186,15 @@ try {
         'Word' {
             `$res.ConvertedType = 'docx'
             `$app = New-Object -ComObject Word.Application
-            `$app.Visible = `$false
-            `$app.DisplayAlerts = 0
+            `$app.Visible = `$interactivePrompt
+            if (`$interactivePrompt) { `$app.DisplayAlerts = -1 } else { `$app.DisplayAlerts = 0 }
             `$doc = `$null
             try {
-                `$doc = `$app.Documents.Open(`$InputPath, `$false, `$true)
+                if ([string]::IsNullOrEmpty(`$Password)) {
+                    `$doc = `$app.Documents.Open(`$InputPath, `$false, `$true, `$false)
+                } else {
+                    `$doc = `$app.Documents.Open(`$InputPath, `$false, `$true, `$false, `$Password)
+                }
                 try {
                     `$doc.SaveAs2(`$OutputPath, 16)
                 } catch {
@@ -2086,13 +2208,17 @@ try {
         'Excel' {
             `$res.ConvertedType = 'xlsx'
             `$app = New-Object -ComObject Excel.Application
-            `$app.Visible = `$false
-            `$app.DisplayAlerts = `$false
-            try { `$app.ScreenUpdating = `$false } catch {}
-            try { `$app.EnableEvents = `$false } catch {}
+            `$app.Visible = `$interactivePrompt
+            if (`$interactivePrompt) { `$app.DisplayAlerts = `$true } else { `$app.DisplayAlerts = `$false }
+            try { `$app.ScreenUpdating = `$interactivePrompt } catch {}
+            try { `$app.EnableEvents = `$interactivePrompt } catch {}
             `$wb = `$null
             try {
-                `$wb = `$app.Workbooks.Open(`$InputPath, 0, `$true)
+                if ([string]::IsNullOrEmpty(`$Password)) {
+                    `$wb = `$app.Workbooks.Open(`$InputPath, 0, `$true)
+                } else {
+                    `$wb = `$app.Workbooks.Open(`$InputPath, 0, `$true, 5, `$Password)
+                }
                 `$wb.SaveAs(`$OutputPath, 51)
             } finally {
                 if (`$wb) { try { `$wb.Close(`$false) } catch { try { `$wb.Close() } catch {} } ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$wb) } catch {} }
@@ -2102,10 +2228,10 @@ try {
         'PowerPoint' {
             `$res.ConvertedType = 'pptx'
             `$app = New-Object -ComObject PowerPoint.Application
-            try { `$app.Visible = 0 } catch {}
+            try { if (`$interactivePrompt) { `$app.Visible = 1 } else { `$app.Visible = 0 } } catch {}
             `$pres = `$null
             try {
-                `$pres = `$app.Presentations.Open(`$InputPath, `$false, `$true, `$false)
+                `$pres = `$app.Presentations.Open(`$InputPath, `$false, `$true, `$interactivePrompt)
                 `$pres.SaveAs(`$OutputPath, 24)
             } finally {
                 if (`$pres) { try { `$pres.Close() } catch {} ; try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject(`$pres) } catch {} }
@@ -2141,14 +2267,20 @@ try {
             '-InputPath', $FilePath,
             '-OutputPath', $tempPath,
             '-ResultPath', $helperOut,
-            '-AppType', $AppType
+            '-AppType', $AppType,
+            '-Password', $batchPassword
         ) -WindowStyle Minimized -PassThru
 
-        $completed = $proc.WaitForExit($TimeoutSec * 1000)
-        if (-not $completed) {
-            try { $proc.Kill() } catch {}
-            $result.Status = 'Timeout'
-            $result.Error = 'Conversion timeout'
+        $wait = Wait-HelperProcess -Process $proc -TimeoutSec $TimeoutSec -AllowScanCancel -CancelStatus 'Cancelled' -CancelError 'Conversion cancelled by user'
+        if (-not $wait.Completed) {
+            if ($wait.Cancelled) {
+                $result.Status = 'Cancelled'
+                $result.Error = 'Conversion cancelled by user'
+            }
+            else {
+                $result.Status = 'Timeout'
+                $result.Error = 'Conversion timeout'
+            }
             return New-Object PSObject -Property $result
         }
 
@@ -2209,6 +2341,11 @@ function Convert-LegacyOfficeToOpenXmlTemp {
         'PowerPoint' { $result.ConvertedType = 'pptx' }
     }
 
+    # 有批次密碼或啟用互動式密碼提示時，固定走 helper 子程序，避免主掃描執行緒被 Office COM 卡住。
+    if ((-not [bool]$script:SkipEncryptedFiles) -or -not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) {
+        return (Convert-LegacyOfficeViaHelperToTemp -FilePath $FilePath -AppType $AppType -TimeoutSec $TimeoutSec)
+    }
+
     # 優先使用 Office 2007 相容性套件 Converter
     $converterResult = Convert-LegacyOfficeViaConverterToTemp -FilePath $FilePath -AppType $AppType -TimeoutSec $TimeoutSec
     if ($converterResult -and $converterResult.Success) {
@@ -2234,7 +2371,7 @@ function Convert-LegacyOfficeToOpenXmlTemp {
     }
 
     $targetExt = '.' + $result.ConvertedType
-    $tempPath = Join-Path $env:TEMP ('ORT_CONVERT_' + [guid]::NewGuid().ToString() + $targetExt)
+    $tempPath = New-LegacyConvertedTempPath -SourcePath $FilePath -TargetExt $targetExt
     $doc = $null
     $wb = $null
     $pres = $null
@@ -2242,17 +2379,17 @@ function Convert-LegacyOfficeToOpenXmlTemp {
     try {
         switch ($AppType) {
             'Word' {
-                $doc = $app.Documents.Open($FilePath, $false, $true)
+                $doc = if ([string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) { $app.Documents.Open($FilePath, $false, $true, $false) } else { $app.Documents.Open($FilePath, $false, $true, $false, [string]$script:BatchPassword) }
                 try { $doc.SaveAs2($tempPath, 16) } catch { $doc.SaveAs([ref]$tempPath, [ref]16) }
                 $result.Success = (Test-Path -LiteralPath $tempPath)
             }
             'Excel' {
-                $wb = $app.Workbooks.Open($FilePath, 0, $true)
+                $wb = if ([string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) { $app.Workbooks.Open($FilePath, 0, $true) } else { $app.Workbooks.Open($FilePath, 0, $true, 5, [string]$script:BatchPassword) }
                 $wb.SaveAs($tempPath, 51)
                 $result.Success = (Test-Path -LiteralPath $tempPath)
             }
             'PowerPoint' {
-                $pres = $app.Presentations.Open($FilePath, $false, $true, $false)
+                $pres = $app.Presentations.Open($FilePath, $false, $true, (-not [bool]$script:SkipEncryptedFiles))
                 $pres.SaveAs($tempPath, 24)
                 $result.Success = (Test-Path -LiteralPath $tempPath)
             }
@@ -2312,9 +2449,108 @@ function Convert-LegacyOfficeToOpenXmlTemp {
 
     return New-Object PSObject -Property $result
 }
+
+function Get-BatchPasswordDisplay {
+    if ([string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) {
+        return (T '未設定' 'Not set')
+    }
+    return (T '已設定，會嘗試解密' 'Set, will try to decrypt')
+}
+
+function Test-BatchPasswordEnabled {
+    return (-not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword))
+}
+
+function Get-EffectiveSkipEncryptedFiles {
+    # When a batch password is set, encrypted files are no longer considered "skipped".
+    # The toolkit still avoids interactive password prompts, but it will try the stored batch password.
+    if (Test-BatchPasswordEnabled) { return $false }
+    return [bool]$script:SkipEncryptedFiles
+}
+
+function Test-ProtectionStateIsEncryptedLike {
+    param([string]$State)
+    return ([string]$State -in @('Encrypted','PossiblyProtected','WriteProtectedOnly'))
+}
+
+function Test-ConversionStatusIsEncryptedSkip {
+    param([string]$Status)
+    return ([string]$Status -in @('SkippedByProtectionCheck','SkippedByProbe'))
+}
+
+function Test-ConversionStatusIsDecryptSuccess {
+    param([string]$Status)
+    return ([string]$Status -like 'PasswordSuccess*')
+}
+
+function Read-PlainTextPasswordFromSecureString {
+    param([Security.SecureString]$SecureString)
+    if (-not $SecureString) { return '' }
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+    finally { if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) } }
+}
+
+function Configure-BatchPassword {
+    Clear-Host
+    Write-Host (T '批次密碼設定' 'Batch Password Setting') -ForegroundColor Cyan
+    Write-Host ''
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) {
+        $script:BatchPassword = ''
+        Close-OfficeInterop
+        Save-StateAndStatus -Status (T '完成' 'Done') -Summary (T '批次密碼已清除；已加密檔案會維持預設跳過。' 'Batch password cleared; encrypted files will be skipped by default.')
+        Reset-UiCachesSafe
+        Write-Host (T '批次密碼已清除。' 'Batch password cleared.') -ForegroundColor Yellow
+        Wait-Return
+        return
+    }
+
+    Write-Host (T '請輸入要套用到所有加密 Office 檔案的密碼。' 'Enter the password to try on all encrypted Office files.') -ForegroundColor Gray
+    Write-Host (T '直接按 Enter 不輸入密碼：維持預設跳過加密檔案。' 'Press Enter without a password: keep skipping encrypted files by default.') -ForegroundColor DarkGray
+    Write-Host ''
+    $secure = Read-Host (T '密碼' 'Password') -AsSecureString
+    $plain = Read-PlainTextPasswordFromSecureString -SecureString $secure
+    if ([string]::IsNullOrWhiteSpace($plain)) {
+        $script:BatchPassword = ''
+        $script:SkipEncryptedFiles = $true
+        Save-StateAndStatus -Status (T '完成' 'Done') -Summary (T '未輸入密碼；加密檔案維持跳過。' 'No password entered; encrypted files remain skipped.')
+        Reset-UiCachesSafe
+        Write-Host (T '未輸入密碼，維持跳過加密檔案。' 'No password entered. Encrypted files remain skipped.') -ForegroundColor Yellow
+        Wait-Return
+        return
+    }
+
+    $script:BatchPassword = $plain
+    $script:SkipEncryptedFiles = $true
+    Close-OfficeInterop
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary (T '批次密碼已設定；已加密檔案跳過狀態會顯示 False，掃描時會嘗試解密，失敗仍標注為已加密。' 'Batch password set; Skip Encrypted displays False, scan will try to decrypt, failed files remain marked encrypted.')
+    Reset-UiCachesSafe
+    Write-Host (T '批次密碼已設定。再次按 P 可清除。' 'Batch password set. Press P again to clear it.') -ForegroundColor Green
+    Wait-Return
+}
+
 function Toggle-LegacyConversionMode {
     $script:LegacyConversionMode = -not [bool]$script:LegacyConversionMode
     Save-StateAndStatus -Status (T '完成' 'Done') -Summary ((T 'Legacy 轉新版已切換為' 'Legacy conversion switched to') + ': ' + $script:LegacyConversionMode)
+    Reset-UiCachesSafe
+}
+
+function Toggle-LegacyKeepTempConverted {
+    $script:LegacyKeepTempConverted = -not [bool]$script:LegacyKeepTempConverted
+    $msg = if ($script:LegacyKeepTempConverted) {
+        T '保留暫存轉檔已啟用；2003 Office 轉出的新版檔會保留在 Output\ConvertedTemp。' 'Keep temp converted enabled; converted legacy Office files will be kept in Output\ConvertedTemp.'
+    }
+    else {
+        T '保留暫存轉檔已關閉；轉出的暫存新版檔會在解析後清除。' 'Keep temp converted disabled; temporary converted files will be removed after parsing.'
+    }
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary $msg
+    Reset-UiCachesSafe
+}
+
+function Toggle-SkipEncryptedFiles {
+    $script:SkipEncryptedFiles = -not [bool]$script:SkipEncryptedFiles
+    Close-OfficeInterop
+    Save-StateAndStatus -Status (T '完成' 'Done') -Summary ((T '已加密檔案跳過已切換為' 'Skip encrypted files switched to') + ': ' + $script:SkipEncryptedFiles)
     Reset-UiCachesSafe
 }
 
@@ -2400,6 +2636,28 @@ function Get-LegacyReadableText {
     catch { return '' }
 }
 
+function Set-ResultFromOfficeText {
+    param(
+        [System.Collections.IDictionary]$Result,
+        [string]$FilePath,
+        [ValidateSet('Word','Excel','PowerPoint')][string]$AppType,
+        [string]$ContentSource = 'Password decrypted Office text'
+    )
+
+    if (-not $Result) { return $false }
+    $officeText = Get-LegacyOfficeTextViaHelper -FilePath $FilePath -AppType $AppType -TimeoutSec $script:LegacyOfficeTimeoutSec -MaxChars ([Math]::Max(($script:LegacyTextPreviewLength * 12), 4000))
+    if (Test-LegacyTextLooksUseful $officeText) {
+        $Result.ContentHash = Get-TextHash $officeText
+        $Result.PreviewText = $officeText.Substring(0, [Math]::Min($script:LegacyTextPreviewLength, $officeText.Length))
+        $Result.ParseStatus = T '解析成功' 'Parsed'
+        $Result.ParseReason = ''
+        $Result.ContentSource = $ContentSource
+        if ([string]::IsNullOrWhiteSpace([string]$Result.ConversionStatus)) { $Result.ConversionStatus = 'PasswordSuccess' }
+        return $true
+    }
+    return $false
+}
+
 function Get-OfficeContentInfo {
     param([string]$FilePath)
 
@@ -2434,6 +2692,37 @@ function Get-OfficeContentInfo {
                     $result.ContentSource = 'OOXML protection check'
                     return New-Object PSObject -Property $result
                 }
+                if ($ooxmlProtection -and $ooxmlProtection.State -eq 'Encrypted' -and -not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) {
+                    $conv = Convert-LegacyOfficeViaHelperToTemp -FilePath $FilePath -AppType Word -TimeoutSec $script:LegacyOfficeTimeoutSec
+                    if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
+                        try {
+                            $tmpInfo = Get-OfficeContentInfo -FilePath $conv.TempPath
+                            $result.ContentHash = $tmpInfo.ContentHash
+                            $result.PreviewText = $tmpInfo.PreviewText
+                            $result.ParseStatus = $tmpInfo.ParseStatus
+                            $result.ParseReason = $tmpInfo.ParseReason
+                            $result.ContentSource = 'Password decrypted OpenXML'
+                            $result.LegacyConverted = $true
+                            $result.ConvertedType = 'docx'
+                            $result.ConversionStatus = 'PasswordSuccess'
+                            if (-not $result.ContentHash) { [void](Set-ResultFromOfficeText -Result $result -FilePath $FilePath -AppType Word) }
+                        } finally {
+                            if (-not $script:LegacyKeepTempConverted) { try { Remove-Item -LiteralPath $conv.TempPath -Force -ErrorAction SilentlyContinue } catch {} }
+                        }
+                        return New-Object PSObject -Property $result
+                    }
+                    if (Set-ResultFromOfficeText -Result $result -FilePath $FilePath -AppType Word) {
+                        $result.LegacyConverted = $false
+                        $result.ConvertedType = 'docx'
+                        $result.ConversionStatus = 'PasswordSuccessTextOnly'
+                        return New-Object PSObject -Property $result
+                    }
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($conv -and $conv.Error) { [string]$conv.Error } else { T '密碼錯誤或無法解密' 'Wrong password or cannot decrypt' }
+                    $result.ConversionStatus = 'PasswordFailed'
+                    $result.ContentSource = 'OOXML protection check'
+                    return New-Object PSObject -Property $result
+                }
                 $xml = Get-ZipEntryText -ZipPath $FilePath -Candidates @('word/document.xml')
                 if ($xml) {
                     $plain = Normalize-XmlText $xml
@@ -2463,6 +2752,37 @@ function Get-OfficeContentInfo {
                     $result.ParseStatus = T '已略過' 'Skipped'
                     $result.ParseReason = if ($ooxmlProtection.Detail) { [string]$ooxmlProtection.Detail } else { [string]$ooxmlProtection.State }
                     $result.ConversionStatus = 'SkippedByProtectionCheck'
+                    $result.ContentSource = 'OOXML protection check'
+                    return New-Object PSObject -Property $result
+                }
+                if ($ooxmlProtection -and $ooxmlProtection.State -eq 'Encrypted' -and -not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) {
+                    $conv = Convert-LegacyOfficeViaHelperToTemp -FilePath $FilePath -AppType Excel -TimeoutSec $script:LegacyOfficeTimeoutSec
+                    if ($conv -and $conv.Success -and (Test-Path -LiteralPath $conv.TempPath)) {
+                        try {
+                            $tmpInfo = Get-OfficeContentInfo -FilePath $conv.TempPath
+                            $result.ContentHash = $tmpInfo.ContentHash
+                            $result.PreviewText = $tmpInfo.PreviewText
+                            $result.ParseStatus = $tmpInfo.ParseStatus
+                            $result.ParseReason = $tmpInfo.ParseReason
+                            $result.ContentSource = 'Password decrypted OpenXML'
+                            $result.LegacyConverted = $true
+                            $result.ConvertedType = 'xlsx'
+                            $result.ConversionStatus = 'PasswordSuccess'
+                            if (-not $result.ContentHash) { [void](Set-ResultFromOfficeText -Result $result -FilePath $FilePath -AppType Excel) }
+                        } finally {
+                            if (-not $script:LegacyKeepTempConverted) { try { Remove-Item -LiteralPath $conv.TempPath -Force -ErrorAction SilentlyContinue } catch {} }
+                        }
+                        return New-Object PSObject -Property $result
+                    }
+                    if (Set-ResultFromOfficeText -Result $result -FilePath $FilePath -AppType Excel) {
+                        $result.LegacyConverted = $false
+                        $result.ConvertedType = 'xlsx'
+                        $result.ConversionStatus = 'PasswordSuccessTextOnly'
+                        return New-Object PSObject -Property $result
+                    }
+                    $result.ParseStatus = T '已略過' 'Skipped'
+                    $result.ParseReason = if ($conv -and $conv.Error) { [string]$conv.Error } else { T '密碼錯誤或無法解密' 'Wrong password or cannot decrypt' }
+                    $result.ConversionStatus = 'PasswordFailed'
                     $result.ContentSource = 'OOXML protection check'
                     return New-Object PSObject -Property $result
                 }
@@ -2607,6 +2927,7 @@ function Get-OfficeContentInfo {
                     } else {
                         $result.ConversionStatus = if ($conv) { [string]$conv.Status } else { 'Failed' }
                         if ($conv -and $conv.Error) { $result.ParseReason = [string]$conv.Error }
+                        if (-not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) { [void](Set-ResultFromOfficeText -Result $result -FilePath $FilePath -AppType Word) }
                     }
                 }
                 if (-not $result.ContentHash) {
@@ -2664,6 +2985,7 @@ function Get-OfficeContentInfo {
                     } else {
                         $result.ConversionStatus = if ($conv) { [string]$conv.Status } else { 'Failed' }
                         if ($conv -and $conv.Error) { $result.ParseReason = [string]$conv.Error }
+                        if (-not [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) { [void](Set-ResultFromOfficeText -Result $result -FilePath $FilePath -AppType Excel) }
                     }
                 }
                 if (-not $result.ContentHash) {
@@ -3543,18 +3865,23 @@ function Start-Scan {
         Stop-OrphanOfficeProcesses -Force
     }
 
-    $files = @()
-    $exts = @('*.docx','*.xlsx','*.pptx','*.doc','*.xls','*.ppt','*.rtf','*.pdf','*.txt')
-
-    foreach ($e in $exts) {
-        try {
-            $files += Get-ChildItem -LiteralPath $script:ScanRoot -Recurse -File -Filter $e -ErrorAction SilentlyContinue
-        }
-        catch {
-        }
+    $supportedExtensions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($ext in @('.docx','.xlsx','.pptx','.doc','.xls','.ppt','.rtf','.pdf','.txt')) {
+        [void]$supportedExtensions.Add($ext)
     }
 
-    $files = $files | Sort-Object FullName -Unique
+    $fileList = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
+    try {
+        foreach ($file in (Get-ChildItem -LiteralPath $script:ScanRoot -Recurse -File -ErrorAction SilentlyContinue)) {
+            if ($supportedExtensions.Contains($file.Extension)) {
+                $fileList.Add($file)
+            }
+        }
+    }
+    catch {
+    }
+
+    $files = @($fileList | Sort-Object FullName -Unique)
 
     if (-not $files -or $files.Count -eq 0) {
         Write-Host (T '找不到支援的檔案。' 'No supported files found.') -ForegroundColor Yellow
@@ -3569,10 +3896,10 @@ function Start-Scan {
     Write-Host ''
     Start-ScanProgressUi
 
-    $rows = @()
+    $rows = [System.Collections.Generic.List[object]]::new()
     $total = $files.Count
 
-    if ($script:LegacyConversionMode) {
+    if ($script:LegacyConversionMode -and [bool]$script:SkipEncryptedFiles -and [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) {
         Initialize-OfficeInterop
     }
 
@@ -3604,6 +3931,11 @@ function Start-Scan {
         }
 
         $contentInfo = Get-OfficeContentInfo -FilePath $f.FullName
+        $batchPasswordEnabled = Test-BatchPasswordEnabled
+        $encryptedLike = Test-ProtectionStateIsEncryptedLike -State ([string]$contentInfo.ProtectionState)
+        $skippedEncrypted = ((-not $batchPasswordEnabled) -and (Test-ConversionStatusIsEncryptedSkip -Status ([string]$contentInfo.ConversionStatus)))
+        $triedDecrypt = ($batchPasswordEnabled -and $encryptedLike)
+        $decryptSuccess = ($triedDecrypt -and ((Test-ConversionStatusIsDecryptSuccess -Status ([string]$contentInfo.ConversionStatus)) -or ([string]$contentInfo.ParseStatus -eq (T '解析成功' 'Parsed'))))
 
         $row = New-Object PSObject -Property ([ordered]@{
             FileName      = $f.Name
@@ -3618,6 +3950,9 @@ function Start-Scan {
             ParseReason   = $contentInfo.ParseReason
             ProtectionState = $contentInfo.ProtectionState
             ProtectionDetail = $contentInfo.ProtectionDetail
+            SkippedEncrypted = $skippedEncrypted
+            TriedDecrypt = $triedDecrypt
+            DecryptSuccess = $decryptSuccess
             ContentSource = $contentInfo.ContentSource
             NamingConfidence = $contentInfo.NamingConfidence
             LegacyConverted = $contentInfo.LegacyConverted
@@ -3630,13 +3965,13 @@ function Start-Scan {
             ScanTime      = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         })
 
-        $rows += $row
+        $rows.Add($row)
     }
         Show-ProgressLine -Current $total -Total $total -FileName '' -Force
     }
     finally {
         Stop-ScanProgressUi
-        if ($script:LegacyConversionMode) {
+        if ($script:LegacyConversionMode -and [bool]$script:SkipEncryptedFiles -and [string]::IsNullOrWhiteSpace([string]$script:BatchPassword)) {
             Close-OfficeInterop
         }
     }
@@ -3646,8 +3981,8 @@ function Start-Scan {
         Write-Host (T '已中止掃描。已保留目前已完成的掃描結果。' 'Scan cancelled. Completed results have been kept.') -ForegroundColor Yellow
     }
 
-    $rows = Apply-Grouping -Rows $rows
-    $rows = Set-PrimaryAndDuplicateRoles -Rows $rows
+    $rows = @(Apply-Grouping -Rows @($rows))
+    $rows = @(Set-PrimaryAndDuplicateRoles -Rows $rows)
     $script:Results = $rows
 
     $csvPath = Join-Path $script:OutputRoot ('OfficeRecovery_{0}.csv' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
@@ -3762,6 +4097,9 @@ function Export-HTML {
         [void]$detailRows.AppendLine('<td style="text-align:right">' + (Get-SafeHtml ([string]$r.SizeKB)) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ParseStatus) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ProtectionState) + '</td>')
+        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml ([string]$r.SkippedEncrypted)) + '</td>')
+        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml ([string]$r.TriedDecrypt)) + '</td>')
+        [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml ([string]$r.DecryptSuccess)) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.DuplicateType) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $roleDisplay) + '</td>')
         [void]$detailRows.AppendLine('<td>' + (Get-SafeHtml $r.ContentSource) + '</td>')
@@ -3814,6 +4152,9 @@ function Export-HTML {
     $thSizeKB        = New-ThLabelHtml -Zh '大小(KB)'   -En 'Size (KB)'
     $thStatus        = New-ThLabelHtml -Zh '狀態'       -En 'Status'
     $thProtection    = New-ThLabelHtml -Zh '保護狀態'   -En 'Protection State'
+    $thSkippedEncrypted = New-ThLabelHtml -Zh '加密跳過' -En 'Skipped Encrypted'
+    $thTriedDecrypt  = New-ThLabelHtml -Zh '嘗試解密'   -En 'Tried Decrypt'
+    $thDecryptSuccess = New-ThLabelHtml -Zh '解密成功'  -En 'Decrypt Success'
     $thDupType       = New-ThLabelHtml -Zh '重複判定'   -En 'Duplicate Type'
     $thRole          = New-ThLabelHtml -Zh '角色'       -En 'Role'
     $thSource        = New-ThLabelHtml -Zh '內容來源'   -En 'Content Source'
@@ -3864,7 +4205,7 @@ h1{margin:0 0 10px 0;font-size:30px}
 }
 .panel{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:18px;margin-bottom:20px;overflow:visible}
 .table-wrap{width:100%;max-width:100%;overflow:auto;-webkit-overflow-scrolling:touch;border:1px solid #dbe4f0;border-radius:12px;background:#fff}
-.table-wrap table{width:max-content;min-width:2200px;border-collapse:separate;border-spacing:0;table-layout:auto}
+.table-wrap table{width:max-content;min-width:2550px;border-collapse:separate;border-spacing:0;table-layout:auto}
 th,td{border-right:1px solid #dbe4f0;border-bottom:1px solid #dbe4f0;padding:8px 10px;vertical-align:top;text-align:left;font-size:13px;overflow-wrap:anywhere;word-break:break-word;background:#fff}
 th:last-child,td:last-child{border-right:none}
 thead th{position:sticky;top:0;z-index:2;background:#eaf2ff}
@@ -4084,6 +4425,9 @@ window.addEventListener("load", function() {
                     <th>$thSizeKB</th>
                     <th>$thStatus</th>
                     <th>$thProtection</th>
+                    <th>$thSkippedEncrypted</th>
+                    <th>$thTriedDecrypt</th>
+                    <th>$thDecryptSuccess</th>
                     <th>$thDupType</th>
                     <th>$thRole</th>
                     <th>$thSource</th>
@@ -5124,8 +5468,15 @@ try {
             continue
         }
 
+
         if (Test-KeyMatch -KeyInfo $key -KeyName 'H' -VirtualKeyCode 72 -Chars @('h','H')) {
             Toggle-NamingMode
+            $needsFullRedraw = $true
+            continue
+        }
+
+        if (Test-KeyMatch -KeyInfo $key -KeyName 'P' -VirtualKeyCode 80 -Chars @('p','P')) {
+            Configure-BatchPassword
             $needsFullRedraw = $true
             continue
         }
@@ -5211,6 +5562,13 @@ try {
                 Draw-StatusBar
                 Draw-SettingsPanel
                 Draw-OneMenuItem -Index $script:SelectedMenu -Selected
+                continue
+            }
+            'ConfigureBatchPassword' {
+                [Console]::CursorVisible = $true
+                Configure-BatchPassword
+                [Console]::CursorVisible = $false
+                $needsFullRedraw = $true
                 continue
             }
             'TogglePrimaryOnly' {
