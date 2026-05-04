@@ -272,16 +272,6 @@ powershell -ExecutionPolicy Bypass -File .\OfficeRecoveryToolkit.ps1
 
 ---
 
-## 建議後續整理方向
-
-- 補正式 release 流程
-- 補建置與發佈說明
-- 補測試案例資料集
-- 將 PowerShell 大檔逐步模組化
-- 整理版本號與文件一致性
-
----
-
 ## 作者備註
 
 這是一套面向實務檔案救援整理場景的工具，不只是單純改名腳本，而是結合內容解析、規則判斷、報表輸出與安全整理流程的文件分析工具。
