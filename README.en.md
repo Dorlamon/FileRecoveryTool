@@ -65,6 +65,9 @@ FileRecoveryTool/
 Microsoft Office Word、Excel、PowerPoint 2007 File Format Compatibility Pack：
 https://driver.uch.edu.tw/?path=old_ftp%2F01_Microsoft_%E5%BE%AE%E8%BB%9F%E6%A0%A1%E5%9C%92%E8%BB%9F%E9%AB%94%2FOffice%2FMS_Office_2007_Enterprise%2F%E7%9B%B8%E5%AE%B9%E6%80%A7%E5%A5%97%E4%BB%B6
 
+Microsoft Office compatibility pack Service Pack 2 (SP2) hotifx:
+https://www.catalog.update.microsoft.com/Search.aspx?q=953331
+
 ---
 
 ## Usage
