@@ -88,7 +88,6 @@ FileRecoveryTool/
 ### 必要安裝
 
 Microsoft Office Word、Excel、PowerPoint 2007 File Format Compatibility Pack：
-
 https://driver.uch.edu.tw/?path=old_ftp%2F01_Microsoft_%E5%BE%AE%E8%BB%9F%E6%A0%A1%E5%9C%92%E8%BB%9F%E9%AB%94%2FOffice%2FMS_Office_2007_Enterprise%2F%E7%9B%B8%E5%AE%B9%E6%80%A7%E5%A5%97%E4%BB%B6
 
 > 備註：本專案主要設計給 Windows 環境使用。在 macOS 上可閱讀、編輯、整理原始碼，但完整執行流程仍建議在 Windows 上進行。
