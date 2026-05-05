@@ -5,6 +5,10 @@ Intelligent post-recovery organization tool for Office documents.
 This tool is designed for scenarios after file recovery where original filenames are lost, contents are mixed, and manual identification is difficult. It analyzes file content, hashes, formats, and naming rules to help users quickly identify primary files, duplicates, and corrupted files, and generate suggested filenames and analysis reports.
 
 ---
+screenshot:
+https://github.com/Dorlamon/FileRecoveryTool/blob/main/screenshot.en-us.png
+
+---
 
 ## Core Purpose
 
