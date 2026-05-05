@@ -4,8 +4,6 @@ Office 文件救援後智慧整理工具。
 
 這個工具主要用在檔案救援後，原始檔名遺失、內容混雜、難以人工辨識的情境。它會透過檔案內容分析、雜湊比對、格式解析與命名規則，協助使用者快速辨識主檔、重複檔、損毀檔，並產生建議檔名與分析報表。
 
----
-
 ![screenshot](https://github.com/Dorlamon/FileRecoveryTool/blob/main/screenshot.zh-tw.png)
 
 ---
