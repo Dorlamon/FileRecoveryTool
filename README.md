@@ -5,6 +5,8 @@
   <a href="README.en.md">🇺🇸 English</a>
 </p>
 
+![screenshot](https://github.com/Dorlamon/FileRecoveryTool/blob/main/screenshot.en-us.png)
+
 ---
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1-blue)
