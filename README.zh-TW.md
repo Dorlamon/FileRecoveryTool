@@ -6,6 +6,10 @@ Office 文件救援後智慧整理工具。
 
 ---
 
+![screenshot](https://github.com/Dorlamon/FileRecoveryTool/blob/main/screenshot.zh-tw.png)
+
+---
+
 ## 核心用途
 
 當磁碟救援後失去原始檔名資訊（例如 MFT 遺失）時，本工具可作為輔助整理工具，協助：
